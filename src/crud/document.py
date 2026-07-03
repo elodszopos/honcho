@@ -157,6 +157,42 @@ async def query_documents_recent(
     return result.scalars().all()
 
 
+async def count_documents_for_session(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    session_name: str,
+) -> int:
+    """
+    Count non-deleted documents a session has contributed to a collection.
+
+    Used by the deriver to enforce a per-session observation cap so a single
+    distillation burst can't dominate the representation.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        observer: Name of the observing peer
+        observed: Name of the observed peer
+        session_name: Session whose observations are counted
+
+    Returns:
+        Number of non-deleted documents for the (observer, observed, session) tuple
+    """
+    stmt = select(func.count()).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
+        models.Document.session_name == session_name,
+        models.Document.deleted_at.is_(None),
+    )
+
+    result = await db.execute(stmt)
+    return result.scalar_one()
+
+
 async def query_documents_most_derived(
     db: AsyncSession,
     workspace_name: str,
@@ -1064,7 +1100,7 @@ async def is_rejected_duplicate(
     """
     Check if a document is a duplicate of an existing document.
 
-    Uses: 1) Cosine similarity (>=0.95), 2) Token diff for retention.
+    Uses: 1) Cosine similarity (within DERIVER.DEDUPLICATE_MAX_DISTANCE), 2) Token diff for retention.
 
     Returns True if both:
     - the document is deemed a duplicate of an existing document
@@ -1088,7 +1124,7 @@ async def is_rejected_duplicate(
         query=doc.content,
         observer=observer,
         observed=observed,
-        max_distance=0.05,
+        max_distance=settings.DERIVER.DEDUPLICATE_MAX_DISTANCE,
         top_k=1,
         embedding=doc.embedding,
     )

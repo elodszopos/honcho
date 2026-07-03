@@ -526,6 +526,16 @@ class QueueManager:
                     self.queue_empty_flag.clear()
                     continue
 
+                # Reap stale AQS rows even when the pool is full. Gating this
+                # behind the capacity check below deadlocks the system when all
+                # workers are wedged on a hung LLM call: cleanup never runs,
+                # AQS rows go unbounded, no new claims possible. The call
+                # rate-limits itself via the jittered cleanup interval.
+                try:
+                    await self._maybe_cleanup_stale_work_units()
+                except Exception:
+                    logger.exception("Stale work unit cleanup failed")
+
                 # Check if we have capacity before querying. There is work to do
                 # (workers are busy), so keep the base interval for fast pickup
                 # when capacity frees rather than backing off.
@@ -537,7 +547,6 @@ class QueueManager:
                     continue
 
                 try:
-                    await self._maybe_cleanup_stale_work_units()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
                         self._reset_poll_interval()
@@ -657,15 +666,21 @@ class QueueManager:
                                     for item in items_to_process
                                     if item.message_id is not None
                                 ]
-                                await process_representation_batch(
-                                    messages_context,
-                                    message_level_configuration,
-                                    observers=observers,
-                                    observed=work_unit.observed,
-                                    queue_item_message_ids=queue_item_message_ids,
-                                    hit_batch_token_cap=batch_result.hit_batch_token_cap,
-                                    was_flush_enabled=batch_result.was_flush_enabled,
-                                    batch_max_tokens=batch_result.batch_max_tokens,
+                                # Bounded so a hung LLM call raises TimeoutError
+                                # instead of holding the semaphore forever; the
+                                # error path marks the item and frees the slot.
+                                await asyncio.wait_for(
+                                    process_representation_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observers=observers,
+                                        observed=work_unit.observed,
+                                        queue_item_message_ids=queue_item_message_ids,
+                                        hit_batch_token_cap=batch_result.hit_batch_token_cap,
+                                        was_flush_enabled=batch_result.was_flush_enabled,
+                                        batch_max_tokens=batch_result.batch_max_tokens,
+                                    ),
+                                    timeout=settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS,
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
@@ -690,7 +705,12 @@ class QueueManager:
                                 break
 
                             try:
-                                await process_item(queue_item)
+                                # Same bound as the representation path -- covers
+                                # summary/dream/webhook task types.
+                                await asyncio.wait_for(
+                                    process_item(queue_item),
+                                    timeout=settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS,
+                                )
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key
                                 )

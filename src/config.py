@@ -824,6 +824,13 @@ class DeriverSettings(HonchoSettings):
         float, Field(default=60.0, ge=0.0, le=3600.0)
     ] = 60.0
 
+    # Hard upper bound on a single work-unit pass through process_work_unit.
+    # If the inner LLM call hangs, asyncio.wait_for raises TimeoutError, the
+    # `async with self.semaphore` block exits, and the slot is released so
+    # other work units can be claimed. Without this bound the worker pool
+    # deadlocks: all N slots held by hung tasks, semaphore permanently locked.
+    WORK_UNIT_TIMEOUT_SECONDS: Annotated[int, Field(default=300, gt=0, le=7200)] = 300
+
     # Retention window (seconds) for keeping errored items in the queue
     QUEUE_ERROR_RETENTION_SECONDS: Annotated[
         int, Field(default=30 * 24 * 3600, gt=0)
@@ -844,6 +851,14 @@ class DeriverSettings(HonchoSettings):
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
 
+    # Cosine-distance ceiling for the write-time duplicate check. Upstream
+    # hardcoded 0.05 (near-verbatim only) -- paraphrase variants of the same
+    # fact score farther apart and slip through. Distances are embedding-
+    # model-specific: tune against LOG_OBSERVATIONS evidence, not by feel.
+    DEDUPLICATE_MAX_DISTANCE: Annotated[
+        float, Field(default=0.05, gt=0.0, le=1.0)
+    ] = 0.05
+
     LOG_OBSERVATIONS: bool = False
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=25000, gt=0, le=25000)] = 25000
@@ -856,6 +871,18 @@ class DeriverSettings(HonchoSettings):
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
         int, Field(default=100, gt=0, le=1000)
     ] = 100
+
+    # Upper bound on how many observations a single session may contribute to a
+    # given (observer, observed) collection. Without this, one long or
+    # information-dense session can dump a burst of conclusions in a single
+    # distillation pass and dominate the representation -- recency-ordered
+    # recall then surfaces mostly that one session's facts, distorting the peer
+    # model. The deriver counts existing non-deleted observations for the
+    # session and drops new ones once the cap is reached. 0 disables the cap
+    # (the default -- enable via env if a real burst problem shows up).
+    MAX_OBSERVATIONS_PER_SESSION: Annotated[
+        int, Field(default=0, ge=0, le=10_000)
+    ] = 0
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,

@@ -1,3 +1,4 @@
+.idea
 .worktrees/
 api/**/*.db
 api/data
