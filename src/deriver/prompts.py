@@ -65,10 +65,10 @@ Analyze messages to extract **durable, self-contained facts** about the target p
 RULES:
 - The target peer is the peer identified below under `Target peer:`.
 - A peer can be a human user, AI agent, bot, service, or other actor.
-- Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
-- Properly attribute observations to the correct subject: if it is about the target peer, use the exact peer id as the subject. If the target peer is referencing someone or something else, make that clear.
+- Refer to the target peer as "the user" in final observations -- never spell out an id, username, or name. The structured observer/observed fields already record identity; the prose only needs "the user".
+- Properly attribute observations to the correct subject: if it is about the target peer, use "the user" as the subject. If the user is referencing someone or something else, name that person or thing explicitly.
 - Extract only observations that clear the SELECTIVITY CRITERIA below, using other speakers' messages as attribution context, not as extraction targets.
-- Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
+- Contextualize each observation sufficiently (e.g. "the user is nervous about the job interview at the pharmacy" not just "the user is nervous")
 - State each fact once, in its most general wording -- never several variants of the same fact, and never a project-bound wording when a general one is true.
 
 SELECTIVITY CRITERIA -- a fact must pass ALL four to be extracted:
@@ -96,15 +96,15 @@ If a statement fails any single criterion, do not extract it. When uncertain whe
 
 Extract only what the messages support: never invent specifics, list items, or entities the peer did not state, and never let a general-knowledge leap add detail beyond a direct implication. Never infer a team, employer, or affiliation from workflow evidence, and never coin a named concept or mindset label the peer did not use themselves. State the plain fact, never a hedged guess -- an observation that needs "likely" or "probably" is not yet a fact; leave it out.
 
-EXAMPLES (using `alice` as the target peer id):
+EXAMPLES:
 
 Positive -- clears all four criteria:
-- "I've been doing intermittent fasting for about 8 months now, it works well for me" → EXPLICIT: "alice has practiced intermittent fasting for about 8 months and finds it effective"
-- "I really don't like when tools make me confirm twice, once is enough" → EXPLICIT: "alice prefers a single confirmation step from tools, not double confirmation"
-- "My sister Maya just moved to Lisbon" → EXPLICIT: "alice's sister, Maya, lives in Lisbon"
-- "the media server is live on my homelab now, everything streams from there" → EXPLICIT: "alice runs a media server on her homelab that handles her streaming" (shipped outcome -- extractable under the HARD RULE)
-- "python3 is my preferred interpreter for scripting" → EXPLICIT: "alice prefers python3 as her scripting interpreter" (a durable preference -- prose that merely starts with a command word is not a command)
-- "from now on, always run the test suite before telling me something is done" → EXPLICIT: "alice requires the test suite to be run before work is declared done" (a standing directive -- a durable rule, not a one-off request)
+- "I've been doing intermittent fasting for about 8 months now, it works well for me" → EXPLICIT: "the user has practiced intermittent fasting for about 8 months and finds it effective"
+- "I really don't like when tools make me confirm twice, once is enough" → EXPLICIT: "the user prefers a single confirmation step from tools, not double confirmation"
+- "My sister Maya just moved to Lisbon" → EXPLICIT: "the user's sister, Maya, lives in Lisbon"
+- "the media server is live on my homelab now, everything streams from there" → EXPLICIT: "the user runs a media server on their homelab that handles their streaming" (shipped outcome -- extractable under the HARD RULE)
+- "python3 is my preferred interpreter for scripting" → EXPLICIT: "the user prefers python3 as their scripting interpreter" (a durable preference -- prose that merely starts with a command word is not a command)
+- "from now on, always run the test suite before telling me something is done" → EXPLICIT: "the user requires the test suite to be run before work is declared done" (a standing directive -- a durable rule, not a one-off request)
 
 Negative -- extract nothing, explicit: [] is the correct output:
 - "yes, go ahead and do that" → explicit: [] (deixis -- meaning lives outside the text)
@@ -112,10 +112,10 @@ Negative -- extract nothing, explicit: [] is the correct output:
 - "just finished debugging the auth bug, took forever" → explicit: [] (transient task state)
 - "made a commit with hash 5e090e8, CI is green" → explicit: [] (development mechanics -- opaque identifier plus one-off status)
 - "phase 2 of the intake plan is done, phase 3 will extend the schema" → explicit: [] (project-scoped process -- the plan's road, not its shipped outcome)
-- "check my calendar for tomorrow and move the 9am if it conflicts" → explicit: [] (a request -- records a moment, not the peer)
-- "per the steward protocol, run search-before-create first" → explicit: [] (procedural/tooling content, not a fact about the peer)
-- "remember this: I want summaries kept short" → EXPLICIT: "alice wants summaries kept short" (extract the preference itself -- NEVER "alice asked to have a preference recorded")
-- "alice balances agent responsiveness with data integrity" is NOT how to record "I like when things load fast but don't want to lose data" → EXPLICIT: "alice prefers fast loading but not at the cost of losing data" (plain form, not the pompous rewrite)
+- "check my calendar for tomorrow and move the 9am if it conflicts" → explicit: [] (a request -- records a moment, not the user)
+- "per the steward protocol, run search-before-create first" → explicit: [] (procedural/tooling content, not a fact about the user)
+- "remember this: I want summaries kept short" → EXPLICIT: "the user wants summaries kept short" (extract the preference itself -- NEVER "the user asked to have a preference recorded")
+- "the user balances agent responsiveness with data integrity" is NOT how to record "I like when things load fast but don't want to lose data" → EXPLICIT: "the user prefers fast loading but not at the cost of losing data" (plain form, not the pompous rewrite)
 
 OUTPUT DISCIPLINE: fewer, better observations beat many marginal ones. An empty extraction is a correct, common, and expected result -- never pad the output to justify the call.
 

@@ -495,6 +495,14 @@ class ConclusionCreate(BaseModel):
         default=None,
         description="A session ID to store the conclusion in, if specified",
     )
+    times_derived: int | None = Field(
+        default=None,
+        description="Reinforcement count to carry onto the created conclusion (defaults to 1 when unset). Lets consolidation preserve the accumulated signal of merged conclusions instead of resetting it.",
+    )
+    source_ids: list[str] | None = Field(
+        default=None,
+        description="Provenance source ids to carry onto the created conclusion. Lets consolidation union the sources of merged conclusions.",
+    )
 
     _token_count: int = PrivateAttr(default=0)
 

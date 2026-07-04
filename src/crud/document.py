@@ -951,7 +951,8 @@ async def create_observations(
                 observed=obs.observed_id,
                 content=obs.content,
                 level="explicit",  # Manually created observations are always explicit
-                times_derived=1,
+                times_derived=obs.times_derived or 1,
+                source_ids=obs.source_ids,
                 internal_metadata={},  # No message_ids since not derived from messages
                 session_name=obs.session_id,
                 embedding=embedding,
@@ -963,7 +964,8 @@ async def create_observations(
                 observed=obs.observed_id,
                 content=obs.content,
                 level="explicit",  # Manually created observations are always explicit
-                times_derived=1,
+                times_derived=obs.times_derived or 1,
+                source_ids=obs.source_ids,
                 internal_metadata={},  # No message_ids since not derived from messages
                 session_name=obs.session_id,
             )
