@@ -12,6 +12,7 @@ Orchestrates:
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal, TypeVar, cast, overload
 
@@ -45,6 +46,51 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 M = TypeVar("M", bound=BaseModel)
+
+
+def _message_chars(messages: list[dict[str, Any]] | None) -> int:
+    if not messages:
+        return 0
+    return sum(len(str(message.get("content", ""))) for message in messages)
+
+
+def _model_config_log_fields(config: ModelConfig) -> dict[str, Any]:
+    fallback = config.fallback
+    return {
+        "transport": config.transport,
+        "model": config.model,
+        "base_url": config.base_url,
+        "thinking_effort": config.thinking_effort,
+        "thinking_budget_tokens": config.thinking_budget_tokens,
+        "max_output_tokens": config.max_output_tokens,
+        "structured_output_mode": config.structured_output_mode,
+        "provider_param_keys": sorted(config.provider_params.keys()),
+        "fallback": (
+            None
+            if fallback is None
+            else {
+                "transport": fallback.transport,
+                "model": fallback.model,
+                "thinking_effort": fallback.thinking_effort,
+            }
+        ),
+    }
+
+
+def _response_log_fields(result: Any) -> dict[str, Any]:
+    if not isinstance(result, HonchoLLMCallResponse):
+        return {"response_type": type(result).__name__}
+    return {
+        "response_type": type(result).__name__,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+        "cache_read": result.cache_read_input_tokens or 0,
+        "cache_creation": result.cache_creation_input_tokens or 0,
+        "tool_calls": len(result.tool_calls_made),
+        "iterations": result.iterations,
+        "hit_input_token_cap": result.hit_input_token_cap,
+        "content_chars": len(str(result.content or "")),
+    }
 
 
 @overload
@@ -174,6 +220,28 @@ async def honcho_llm_call(
                              without `stream_final_only=True`.
     """
     runtime_model_config = resolve_runtime_model_config(model_config)
+    call_started = time.perf_counter()
+    call_kind = "tool_loop" if tools and tool_executor else "single"
+    logger.info(
+        "llm.call start: trace=%s purpose=%s kind=%s model=%s max_tokens=%d max_input_tokens=%s retry=%s/%d stream=%s stream_final_only=%s json_mode=%s response_model=%s tools=%d tool_choice=%s prompt_chars=%d messages=%d message_chars=%d",
+        trace_name,
+        telemetry.call_purpose if telemetry is not None else None,
+        call_kind,
+        _model_config_log_fields(runtime_model_config),
+        max_tokens,
+        max_input_tokens,
+        enable_retry,
+        retry_attempts,
+        stream,
+        stream_final_only,
+        json_mode,
+        getattr(response_model, "__name__", None),
+        len(tools or []),
+        tool_choice,
+        len(prompt or ""),
+        len(messages or []),
+        _message_chars(messages),
+    )
 
     # Caller kwargs left at None are resolved downstream by
     # effective_config_for_call against whichever ModelConfig wins the
@@ -419,6 +487,14 @@ async def honcho_llm_call(
                 stop_seqs=_trace_stop_seqs(),
                 messages=messages,
             )
+        logger.info(
+            "llm.call done: trace=%s purpose=%s kind=%s elapsed_ms=%.1f result=%s",
+            trace_name,
+            telemetry.call_purpose if telemetry is not None else None,
+            call_kind,
+            (time.perf_counter() - call_started) * 1000,
+            _response_log_fields(result),
+        )
         return result
 
     # One run-level Langfuse trace wraps the whole run; step/LLM/tool spans
@@ -487,6 +563,14 @@ async def honcho_llm_call(
             stop_seqs=_trace_stop_seqs(),
             messages=messages,
         )
+    logger.info(
+        "llm.call done: trace=%s purpose=%s kind=%s elapsed_ms=%.1f result=%s",
+        trace_name,
+        telemetry.call_purpose if telemetry is not None else None,
+        call_kind,
+        (time.perf_counter() - call_started) * 1000,
+        _response_log_fields(result),
+    )
     return result
 
 

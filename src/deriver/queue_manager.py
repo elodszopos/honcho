@@ -666,6 +666,19 @@ class QueueManager:
                                     for item in items_to_process
                                     if item.message_id is not None
                                 ]
+                                batch_started = time.perf_counter()
+                                logger.info(
+                                    "deriver.work_unit representation start: worker=%s work_unit=%s aqs=%s observed=%s observers=%d queue_items=%d context_messages=%d message_ids=%s timeout=%s",
+                                    worker_id,
+                                    work_unit_key,
+                                    ownership.aqs_id,
+                                    work_unit.observed,
+                                    len(observers),
+                                    len(items_to_process),
+                                    len(messages_context),
+                                    queue_item_message_ids,
+                                    settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS,
+                                )
                                 # Bounded so a hung LLM call raises TimeoutError
                                 # instead of holding the semaphore forever; the
                                 # error path marks the item and frees the slot.
@@ -686,6 +699,14 @@ class QueueManager:
                                     items_to_process, work_unit_key
                                 )
                                 queue_item_count += len(items_to_process)
+                                logger.info(
+                                    "deriver.work_unit representation done: worker=%s work_unit=%s processed_items=%d total_processed=%d elapsed_ms=%.1f",
+                                    worker_id,
+                                    work_unit_key,
+                                    len(items_to_process),
+                                    queue_item_count,
+                                    (time.perf_counter() - batch_started) * 1000,
+                                )
                             except Exception as e:
                                 await self._handle_processing_error(
                                     e,
@@ -707,6 +728,16 @@ class QueueManager:
                             try:
                                 # Same bound as the representation path -- covers
                                 # summary/dream/webhook task types.
+                                item_started = time.perf_counter()
+                                logger.info(
+                                    "deriver.work_unit item start: worker=%s work_unit=%s task_type=%s queue_item=%s message_id=%s timeout=%s",
+                                    worker_id,
+                                    work_unit_key,
+                                    work_unit.task_type,
+                                    queue_item.id,
+                                    queue_item.message_id,
+                                    settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS,
+                                )
                                 await asyncio.wait_for(
                                     process_item(queue_item),
                                     timeout=settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS,
@@ -715,6 +746,15 @@ class QueueManager:
                                     [queue_item], work_unit_key
                                 )
                                 queue_item_count += 1
+                                logger.info(
+                                    "deriver.work_unit item done: worker=%s work_unit=%s task_type=%s queue_item=%s total_processed=%d elapsed_ms=%.1f",
+                                    worker_id,
+                                    work_unit_key,
+                                    work_unit.task_type,
+                                    queue_item.id,
+                                    queue_item_count,
+                                    (time.perf_counter() - item_started) * 1000,
+                                )
                             except Exception as e:
                                 await self._handle_processing_error(
                                     e,

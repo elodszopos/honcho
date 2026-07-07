@@ -22,6 +22,21 @@ from src.utils.work_unit import construct_work_unit_key
 logger = logging.getLogger(__name__)
 
 
+def is_seeded_memory_message(message: dict[str, Any]) -> bool:
+    """Return True for uploaded curated-memory seed blocks.
+
+    These messages must remain stored/searchable as session context, but they
+    are already-distilled memory, not fresh evidence for summaries, dreams, or
+    representation/conclusion derivation.
+    """
+    metadata = message.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("source") == "local_memory":
+        return True
+
+    content = message.get("content")
+    return isinstance(content, str) and content.lstrip().startswith("<prior_memory_file")
+
+
 async def enqueue(payload: list[dict[str, Any]]) -> None:
     """
     Add message(s) to the deriver queue for processing.
@@ -34,9 +49,10 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
     # This cancels dreams for all collections where observed=peer_name, which covers
     # both self-observation and peer-to-peer observation cases.
     dream_scheduler = get_dream_scheduler()
-    if dream_scheduler and payload:
+    activity_payload = [message for message in payload if not is_seeded_memory_message(message)]
+    if dream_scheduler and activity_payload:
         cancelled_dreams: set[str] = set()
-        for message in payload:
+        for message in activity_payload:
             workspace_name = message.get("workspace_name")
             peer_name = message.get("peer_name")
             if workspace_name and peer_name:
@@ -312,6 +328,14 @@ async def generate_queue_records(
     """
     observed = message["peer_name"]
     message_id: int = message["message_id"]
+
+    if is_seeded_memory_message(message):
+        logger.debug(
+            "message %s from %s skipped memory-generation queues: seeded local memory",
+            message_id,
+            observed,
+        )
+        return []
 
     # Prefer the sequence captured during message creation; fallback only if missing
     message_seq_in_session = int(message.get("seq_in_session") or 0)

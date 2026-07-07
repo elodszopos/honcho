@@ -150,6 +150,7 @@ async def create_messages_for_session(
                 "created_at": message.created_at,
                 "message_public_id": message.public_id,
                 "seq_in_session": message.seq_in_session,
+                "metadata": message.h_metadata,
                 "configuration": original.configuration,
             }
             for message, original in zip(
@@ -232,6 +233,7 @@ async def create_messages_with_file(
             "created_at": message.created_at,
             "message_public_id": message.public_id,
             "seq_in_session": message.seq_in_session,
+            "metadata": message.h_metadata,
             "configuration": form_data.configuration,
         }
         for message in created_messages

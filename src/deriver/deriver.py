@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Any
 
 from nanoid import generate as generate_nanoid
 
@@ -35,6 +36,32 @@ def _get_deriver_model_config() -> ConfiguredModelSettings:
     return settings.DERIVER.MODEL_CONFIG
 
 
+def _model_config_log_fields(config: ConfiguredModelSettings) -> dict[str, Any]:
+    """Return non-secret model-routing fields for operational logs."""
+    overrides = getattr(config, "overrides", None)
+    fallback = getattr(config, "fallback", None)
+    provider_params = getattr(overrides, "provider_params", None) or {}
+    return {
+        "transport": config.transport,
+        "model": config.model,
+        "thinking_effort": config.thinking_effort,
+        "thinking_budget_tokens": config.thinking_budget_tokens,
+        "max_output_tokens": config.max_output_tokens,
+        "structured_output_mode": config.structured_output_mode,
+        "base_url": getattr(overrides, "base_url", None),
+        "provider_param_keys": sorted(provider_params.keys()),
+        "fallback": (
+            None
+            if fallback is None
+            else {
+                "transport": fallback.transport,
+                "model": fallback.model,
+                "thinking_effort": fallback.thinking_effort,
+            }
+        ),
+    }
+
+
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
 async def process_representation_tasks_batch(
     messages: list[Message],
@@ -68,6 +95,20 @@ async def process_representation_tasks_batch(
     messages.sort(key=lambda x: x.id)
     latest_message = messages[-1]
     earliest_message = messages[0]
+    logger.info(
+        "deriver.batch start: workspace=%s session=%s observed=%s observers=%d queued_items=%d prompt_messages=%d message_id_range=%s:%s hit_batch_token_cap=%s flush_enabled=%s batch_max_tokens=%d",
+        latest_message.workspace_name,
+        latest_message.session_name,
+        observed,
+        len(observers),
+        len(queue_item_message_ids),
+        len(messages),
+        earliest_message.id,
+        latest_message.id,
+        hit_batch_token_cap,
+        was_flush_enabled,
+        batch_max_tokens,
+    )
 
     # Get configuration if not provided
     # TODO: this appears to be a very rare edge case coming out of `get_queue_item_batch` in queue_manager.py,
@@ -86,6 +127,13 @@ async def process_representation_tasks_batch(
 
     # Skip if disabled
     if message_level_configuration.reasoning.enabled is False:
+        logger.info(
+            "deriver.batch skipped: workspace=%s session=%s observed=%s reason=reasoning_disabled elapsed_ms=%.1f",
+            latest_message.workspace_name,
+            latest_message.session_name,
+            observed,
+            (time.perf_counter() - overall_start) * 1000,
+        )
         return
 
     custom_instructions = message_level_configuration.reasoning.custom_instructions
@@ -146,27 +194,68 @@ async def process_representation_tasks_batch(
     # Single LLM call
     trace_id = generate_nanoid()
     llm_start = time.perf_counter()
-    response = await honcho_llm_call(
-        model_config=model_config,
-        prompt=prompt,
-        max_tokens=max_tokens,
-        response_model=PromptRepresentation,
-        json_mode=True,
-        max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
-        enable_retry=True,
-        retry_attempts=3,
-        trace_name="minimal_deriver",
-        telemetry=LLMTelemetryContext(
-            workspace_name=latest_message.workspace_name,
-            call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
-            parent_category="representation",
-            observed=observed,
-            track_name="Minimal Deriver",
-            trace_id=trace_id,
-            span_id=trace_id,
-        ),
+    logger.info(
+        "deriver.batch llm_start: trace_id=%s workspace=%s session=%s observed=%s model=%s max_tokens=%d max_input_tokens=%d prompt_chars=%d prompt_scaffold_tokens=%d queued_message_tokens=%d prompt_message_tokens=%d queued_items=%d prompt_messages=%d",
+        trace_id,
+        latest_message.workspace_name,
+        latest_message.session_name,
+        observed,
+        _model_config_log_fields(model_config),
+        max_tokens,
+        settings.DERIVER.MAX_INPUT_TOKENS,
+        len(prompt),
+        prompt_tokens,
+        messages_tokens,
+        sum(msg.token_count for msg in messages),
+        len(queue_item_message_ids),
+        len(messages),
     )
+    try:
+        response = await honcho_llm_call(
+            model_config=model_config,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            response_model=PromptRepresentation,
+            json_mode=True,
+            max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
+            enable_retry=True,
+            retry_attempts=3,
+            trace_name="minimal_deriver",
+            telemetry=LLMTelemetryContext(
+                workspace_name=latest_message.workspace_name,
+                call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
+                parent_category="representation",
+                observed=observed,
+                track_name="Minimal Deriver",
+                trace_id=trace_id,
+                span_id=trace_id,
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "deriver.batch llm_failed: trace_id=%s workspace=%s session=%s observed=%s elapsed_ms=%.1f",
+            trace_id,
+            latest_message.workspace_name,
+            latest_message.session_name,
+            observed,
+            (time.perf_counter() - llm_start) * 1000,
+        )
+        raise
     llm_duration = (time.perf_counter() - llm_start) * 1000
+    logger.info(
+        "deriver.batch llm_done: trace_id=%s workspace=%s session=%s observed=%s elapsed_ms=%.1f input_tokens=%d output_tokens=%d cache_read=%d cache_creation=%d hit_input_token_cap=%s response_type=%s",
+        trace_id,
+        latest_message.workspace_name,
+        latest_message.session_name,
+        observed,
+        llm_duration,
+        response.input_tokens,
+        response.output_tokens,
+        response.cache_read_input_tokens or 0,
+        response.cache_creation_input_tokens or 0,
+        response.hit_input_token_cap,
+        type(response.content).__name__,
+    )
 
     accumulate_metric(
         f"minimal_deriver_{latest_message.id}_{observed}",
@@ -267,6 +356,24 @@ async def process_representation_tasks_batch(
     prompt_message_tokens = sum(msg.token_count for msg in messages)
     extra_context_message_count = max(prompt_message_count - queued_message_count, 0)
     extra_context_tokens = max(prompt_message_tokens - messages_tokens, 0)
+
+    logger.info(
+        "deriver.batch done: trace_id=%s workspace=%s session=%s observed=%s observers_saved=%d/%d explicit=%d deductive=%d total_observations=%d queued_items=%d prompt_messages=%d extra_context_messages=%d total_elapsed_ms=%.1f llm_elapsed_ms=%.1f",
+        trace_id,
+        latest_message.workspace_name,
+        latest_message.session_name,
+        observed,
+        successful_observer_count,
+        len(observers),
+        len(observations.explicit),
+        len(observations.deductive),
+        total_observations,
+        queued_message_count,
+        prompt_message_count,
+        extra_context_message_count,
+        overall_duration,
+        llm_duration,
+    )
 
     # Data-quality invariants. Best-effort — telemetry never bleeds into the
     # deriver path — but log loudly when violated so analytics alerting catches

@@ -1,9 +1,11 @@
 import datetime
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -132,6 +134,39 @@ async def test_file_upload_schedules_immediate_embed(
     assert response.status_code == 201
     expected_ids = [m["id"] for m in response.json()]
     mock_embed_now.assert_awaited_once_with(expected_ids)
+
+
+@pytest.mark.asyncio
+async def test_local_memory_file_upload_is_stored_but_not_queued_for_generation(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """source=local_memory upload chunks are context/search inputs, not memory-generation inputs."""
+    import io
+
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    files = {"file": ("USER.md", io.BytesIO(b"User prefers concise replies."), "text/plain")}
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+        files=files,
+        data={
+            "peer_id": test_peer.name,
+            "metadata": json.dumps({"source": "local_memory"}),
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()[0]["metadata"] == {"source": "local_memory"}
+
+    result = await db_session.execute(
+        select(models.QueueItem).where(models.QueueItem.session_id == test_session.id)
+    )
+    assert result.scalars().all() == []
 
 
 @pytest.mark.asyncio

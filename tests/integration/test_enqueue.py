@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -86,6 +86,41 @@ class TestEnqueueFunction:
 
         with caplog.at_level("ERROR"):
             await enqueue(malformed_payload)  # Should not raise, but log error
+
+    @pytest.mark.asyncio
+    async def test_seeded_local_memory_skips_all_memory_generation(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Seeded memory blocks stay stored/searchable but do not enqueue summaries/representation or cancel dreams."""
+        test_workspace, test_peer = sample_data
+        test_session = models.Session(
+            workspace_name=test_workspace.name, name=str(generate_nanoid())
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        payload = await self.create_sample_payload(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=test_session.name,
+            peer_name=test_peer.name,
+        )
+        payload[0]["metadata"] = {"source": "local_memory"}
+        payload[0]["content"] = "<prior_memory_file>\nseeded memory\n</prior_memory_file>"
+        payload[0]["seq_in_session"] = 20
+
+        scheduler = MagicMock()
+        scheduler.cancel_dreams_for_observed = AsyncMock()
+
+        initial_count = await self.count_queue_items(db_session)
+        with patch("src.deriver.enqueue.get_dream_scheduler", return_value=scheduler):
+            await enqueue(payload)
+        final_count = await self.count_queue_items(db_session)
+
+        assert final_count == initial_count
+        scheduler.cancel_dreams_for_observed.assert_not_called()
 
     # SESSION MESSAGES
     @pytest.mark.asyncio

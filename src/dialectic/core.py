@@ -49,6 +49,36 @@ def _get_dialectic_level_model_config(
     return settings.DIALECTIC.LEVELS[reasoning_level].MODEL_CONFIG
 
 
+def _model_config_log_fields(config: ConfiguredModelSettings) -> dict[str, Any]:
+    """Return non-secret model-routing fields for operational logs."""
+    overrides = getattr(config, "overrides", None)
+    fallback = getattr(config, "fallback", None)
+    provider_params = getattr(overrides, "provider_params", None) or {}
+    return {
+        "transport": config.transport,
+        "model": config.model,
+        "thinking_effort": config.thinking_effort,
+        "thinking_budget_tokens": config.thinking_budget_tokens,
+        "max_output_tokens": config.max_output_tokens,
+        "structured_output_mode": config.structured_output_mode,
+        "base_url": getattr(overrides, "base_url", None),
+        "provider_param_keys": sorted(provider_params.keys()),
+        "fallback": (
+            None
+            if fallback is None
+            else {
+                "transport": fallback.transport,
+                "model": fallback.model,
+                "thinking_effort": fallback.thinking_effort,
+            }
+        ),
+    }
+
+
+def _message_chars(messages: list[dict[str, Any]]) -> int:
+    return sum(len(str(message.get("content", ""))) for message in messages)
+
+
 class DialecticAgent:
     """
     An agentic dialectic that iteratively gathers context to answer queries.
@@ -248,6 +278,19 @@ class DialecticAgent:
         Returns:
             A tuple of (tool_executor, task_name, run_id, start_time)
         """
+        prepare_started = time.perf_counter()
+        query_chars = len(query or "")
+        logger.info(
+            "dialectic.prepare start: run_id=%s workspace=%s session=%s observer=%s observed=%s level=%s query_chars=%d",
+            self._run_id,
+            self.workspace_name,
+            self.session_name or "(global)",
+            self.observer,
+            self.observed,
+            self.reasoning_level,
+            query_chars,
+        )
+
         await self._initialize_session_history()
 
         run_id: str | None = None
@@ -272,7 +315,15 @@ class DialecticAgent:
         )
         accumulate_metric(task_name, "query", query, "blob")
 
+        prefetch_started = time.perf_counter()
         prefetched_observations = await self._prefetch_relevant_observations(query)
+        logger.info(
+            "dialectic.prepare prefetch done: run_id=%s elapsed_ms=%.1f prefetched_conclusions=%d prefetched_chars=%d",
+            self._run_id,
+            (time.perf_counter() - prefetch_started) * 1000,
+            self._prefetched_conclusion_count,
+            len(prefetched_observations or ""),
+        )
 
         if prefetched_observations:
             user_content = (
@@ -303,6 +354,14 @@ class DialecticAgent:
             parent_category="dialectic",
         )
 
+        logger.info(
+            "dialectic.prepare done: run_id=%s task=%s messages=%d input_chars=%d elapsed_ms=%.1f",
+            self._run_id,
+            task_name,
+            len(self.messages),
+            _message_chars(self.messages),
+            (time.perf_counter() - prepare_started) * 1000,
+        )
         return tool_executor, task_name, run_id, start_time
 
     def _telemetry_context(self, track_name: str | None = None) -> LLMTelemetryContext:
@@ -446,18 +505,57 @@ class DialecticAgent:
             else settings.DIALECTIC.MAX_OUTPUT_TOKENS
         )
 
-        response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            model_config=_get_dialectic_level_model_config(self.reasoning_level),
-            prompt="",  # Ignored since we pass messages
-            max_tokens=max_tokens,
-            tools=tools,
-            tool_choice=level_settings.TOOL_CHOICE,
-            tool_executor=tool_executor,
-            max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
-            messages=self.messages,
-            max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
-            trace_name="dialectic_chat",
-            telemetry=self._telemetry_context(track_name="Dialectic Agent"),
+        model_config = _get_dialectic_level_model_config(self.reasoning_level)
+        logger.info(
+            "dialectic.answer llm_start: run_id=%s level=%s model=%s max_tokens=%d max_input_tokens=%d max_tool_iterations=%d tool_choice=%s tools=%d messages=%d input_chars=%d",
+            self._run_id,
+            self.reasoning_level,
+            _model_config_log_fields(model_config),
+            max_tokens,
+            settings.DIALECTIC.MAX_INPUT_TOKENS,
+            level_settings.MAX_TOOL_ITERATIONS,
+            level_settings.TOOL_CHOICE,
+            len(tools),
+            len(self.messages),
+            _message_chars(self.messages),
+        )
+        llm_started = time.perf_counter()
+        try:
+            response: HonchoLLMCallResponse[str] = await honcho_llm_call(
+                model_config=model_config,
+                prompt="",  # Ignored since we pass messages
+                max_tokens=max_tokens,
+                tools=tools,
+                tool_choice=level_settings.TOOL_CHOICE,
+                tool_executor=tool_executor,
+                max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                messages=self.messages,
+                max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+                trace_name="dialectic_chat",
+                telemetry=self._telemetry_context(track_name="Dialectic Agent"),
+            )
+        except Exception:
+            logger.exception(
+                "dialectic.answer llm_failed: run_id=%s level=%s elapsed_ms=%.1f",
+                self._run_id,
+                self.reasoning_level,
+                (time.perf_counter() - llm_started) * 1000,
+            )
+            raise
+        llm_elapsed_ms = (time.perf_counter() - llm_started) * 1000
+        logger.info(
+            "dialectic.answer llm_done: run_id=%s level=%s elapsed_ms=%.1f input_tokens=%d output_tokens=%d cache_read=%d cache_creation=%d tool_calls=%d iterations=%d hit_input_token_cap=%s response_chars=%d",
+            self._run_id,
+            self.reasoning_level,
+            llm_elapsed_ms,
+            response.input_tokens,
+            response.output_tokens,
+            response.cache_read_input_tokens or 0,
+            response.cache_creation_input_tokens or 0,
+            len(response.tool_calls_made),
+            response.iterations,
+            response.hit_input_token_cap,
+            len(response.content or ""),
         )
 
         self._log_response_metrics(
