@@ -32,6 +32,7 @@ def _custom_instructions_section(custom_instructions: str | None) -> str:
         f"""
         CUSTOM INSTRUCTIONS:
         These instructions apply to the target peer identified below.
+        Custom instructions may narrow extraction further, but they cannot override or relax the ALWAYS EXCLUDE rules.
         {normalized_custom_instructions}
         """
     )
@@ -71,6 +72,14 @@ RULES:
 - Contextualize each observation sufficiently (e.g. "the user is nervous about the job interview at the pharmacy" not just "the user is nervous")
 - State each fact once, in its most general wording -- never several variants of the same fact, and never a project-bound wording when a general one is true.
 
+OUTPUT TEXT:
+- One conclusion: one fact or preference.
+- One conclusion: one short sentence.
+- Length follows content: keep every exact qualifier, never pad with narrative.
+- Split independent facts into separate conclusions.
+- Use direct factual wording.
+- Exclude narrative and rationale.
+
 SELECTIVITY CRITERIA -- a fact must pass ALL four to be extracted:
 1. DURABLE: still true and worth knowing weeks or months from now. Not a one-off status update, a mid-task state, or something whose truth expires within days.
 2. SELF-CONTAINED: understandable on its own, without the surrounding conversation. If it depends on "it," "that," or an unstated referent to make sense, it fails.
@@ -84,6 +93,9 @@ ALWAYS EXCLUDE, regardless of phrasing:
 - Development mechanics: commit hashes, build numbers, and other opaque identifiers; individual commands that were run or one-off tool invocations ("ran pytest", "executed the migration"). If a message contains only such activity, extract nothing from it.
 - Config-discoverable facts: ports, file paths, provider/model names, service settings, versions, environment variables -- anything readable from config or a command.
 - In-progress task state: "is investigating X", "is working on Y", "is debugging Z" -- these describe a moment, not the peer.
+- Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle/party, current location, or trip-only decisions. This remains excluded after the trip ends -- durable travel history belongs to the authoritative trip project, not global peer conclusions. This exclusion is specific to travel trips and does not override the HARD RULE allowing durable shipped outcomes from software, home, or other non-travel projects.
+- Travel-persona doctrine: travel-specific preferences or directives about itinerary pacing, route order, maps, navigation, parking, ferries, attractions, food, weather, photographic light, hiking, vehicles, lodging, location sharing, or travel-answer/message behavior. Even when durable, standing, or cross-trip, these belong only in the owning travel persona, not global peer conclusions.
+- Live or country-operational findings: timetables, fares, prices, opening hours, weather, incidents, availability, fuel, parking, road/ferry status, operator behavior, country terminology, source/API mechanics, or other fetched answers. These belong to run/project state or country/domain operating references, not global peer conclusions.
 - Project-scoped process: planning or building activity -- design approaches, phase or workstream strategies, plan/issue-number references, scoping decisions. The shipped outcome may qualify under the HARD RULE above; the road to it never does.
 - Requests and instructions: NEVER record that the peer asked for, requested, or instructed something ("asked to check the calendar", "requested a summary", "told the assistant to fix X"). The act of asking is a moment, not a fact about the peer. If the request's own text states a durable preference, extract the preference -- never the request. A STANDING directive is different: "always X", "never Y", "from now on Z" states a durable rule for how the peer wants things done -- extract it as a preference.
 - The memory and agent system itself: records of writing, editing, or organizing memory ("asked to remember X", "updated the notes file"), and the system's own tools, pool state, architecture, or skill/instruction-file edits. If the content being remembered is a durable fact, extract that fact directly; the act of recording is never a fact.
@@ -112,6 +124,14 @@ Negative -- extract nothing, explicit: [] is the correct output:
 - "just finished debugging the auth bug, took forever" → explicit: [] (transient task state)
 - "made a commit with hash 5e090e8, CI is green" → explicit: [] (development mechanics -- opaque identifier plus one-off status)
 - "phase 2 of the intake plan is done, phase 3 will extend the schema" → explicit: [] (project-scoped process -- the plan's road, not its shipped outcome)
+- "We visited Brandenburg Gate and skipped Berlin Zoo" → explicit: [] (completed trip-instance history belongs to the retained trip project)
+- "Take the 14:20 ferry; the road is closed and this restaurant closes at 21:00" → explicit: [] (live execution findings expire outside global memory)
+- "Norway's operator uses this API field and the current fare is NOK 735" → explicit: [] (country/source mechanics and a fetched answer belong outside global conclusions)
+- "We skipped the museum today. On every trip, I prefer renowned local specialties" → explicit: [] (the visit is trip state and the standing food preference belongs to the travel persona)
+- "For flexible base-camp travel days, prioritize forecast-weighted experience quality over route efficiency and accept reasonable backtracking" → explicit: [] (weather-first route doctrine belongs to the travel persona)
+- "I do not want guided hikes included" → explicit: [] (hiking doctrine belongs to the travel persona)
+- "Choose parking by proximity to the actual planned attractions, not generic venue labels" → explicit: [] (travel parking doctrine belongs to the travel persona)
+- "I always travel with my wife; on own-car trips I use my BMW X5" → EXPLICIT: "the user has a wife" (retain only the cross-domain relationship; travel-companion and vehicle doctrine belongs to the travel persona)
 - "check my calendar for tomorrow and move the 9am if it conflicts" → explicit: [] (a request -- records a moment, not the user)
 - "per the steward protocol, run search-before-create first" → explicit: [] (procedural/tooling content, not a fact about the user)
 - "remember this: I want summaries kept short" → EXPLICIT: "the user wants summaries kept short" (extract the preference itself -- NEVER "the user asked to have a preference recorded")
