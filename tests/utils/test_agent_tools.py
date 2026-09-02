@@ -4,7 +4,6 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -145,8 +144,9 @@ def make_tool_context(tool_test_data: Any) -> Callable[..., ToolContext]:
         include_observation_ids: bool = False,
         history_token_limit: int = 8192,
         session_name: str | None = None,
-        run_id: str | None = None,
+        run_id: str | None = "test-run",
         agent_type: str | None = None,
+        agent_model: str | None = "test-model",
         parent_category: str | None = None,
     ) -> ToolContext:
         return ToolContext(
@@ -160,6 +160,7 @@ def make_tool_context(tool_test_data: Any) -> Callable[..., ToolContext]:
             db_lock=shared_lock,
             run_id=run_id,
             agent_type=agent_type,
+            agent_model=agent_model,
             parent_category=parent_category,
         )
 
@@ -193,8 +194,22 @@ class TestCreateObservations:
             ctx,
             {
                 "observations": [
-                    {"content": "Likes tea", "level": "explicit"},
-                    {"content": "Enjoys reading", "level": "explicit"},
+                    {
+                        "content": "Likes tea",
+                        "level": "explicit",
+                        "action": "create",
+                        "reason_for_entry": "Distinct durable preference",
+                        "search_query": "Likes tea",
+                        "searched_conclusion_ids": [],
+                    },
+                    {
+                        "content": "Enjoys reading",
+                        "level": "explicit",
+                        "action": "create",
+                        "reason_for_entry": "Distinct durable preference",
+                        "search_query": "Enjoys reading",
+                        "searched_conclusion_ids": [],
+                    },
                 ]
             },
         )
@@ -211,13 +226,22 @@ class TestCreateObservations:
         )
         docs = (await db_session.execute(stmt)).scalars().all()
         assert len(docs) == 2
+        expected_source_ids = [
+            message.id for message in messages if message.peer_name == peer2.name
+        ]
+        assert all(
+            doc.internal_metadata["message_ids"] == expected_source_ids for doc in docs
+        )
 
     async def test_dialectic_context_forces_deductive(
         self,
         db_session: AsyncSession,
         make_tool_context: Callable[..., ToolContext],
+        tool_test_data: Any,
     ):
         """Dialectic context (no current_messages) forces observations to be deductive."""
+        *_, documents = tool_test_data
+        source_ids = [documents[0].id, documents[1].id]
         ctx = make_tool_context(current_messages=None)
 
         result = await _handle_create_observations(
@@ -226,11 +250,15 @@ class TestCreateObservations:
                 "observations": [
                     {
                         "content": "Inferred preference for quiet spaces",
-                        "source_ids": ["premise1", "premise2"],
+                        "source_ids": source_ids,
                         "premises": [
                             "User mentioned working in libraries",
                             "User avoids noisy cafes",
                         ],
+                        "action": "create",
+                        "reason_for_entry": "Novel deduction after candidate review",
+                        "search_query": "preference for quiet spaces",
+                        "searched_conclusion_ids": [],
                     },
                 ]
             },
@@ -246,15 +274,18 @@ class TestCreateObservations:
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
         assert doc.level == "deductive"
-        assert doc.source_ids == ["premise1", "premise2"]
+        assert doc.source_ids == source_ids
 
     async def test_source_ids_display_prefix_is_stripped(
         self,
         db_session: AsyncSession,
         make_tool_context: Callable[..., ToolContext],
+        tool_test_data: Any,
     ):
         """Models sometimes copy the '[id:xxx]' display format into source_ids;
         the prefix must be stripped so provenance links reference real IDs."""
+        *_, documents = tool_test_data
+        source_ids = [documents[0].id, documents[1].id]
         ctx = make_tool_context(current_messages=None)
 
         result = await _handle_create_observations(
@@ -263,11 +294,15 @@ class TestCreateObservations:
                 "observations": [
                     {
                         "content": "Inferred preference for early mornings",
-                        "source_ids": ["id:premise1", "ID:premise2"],
+                        "source_ids": [f"id:{source_ids[0]}", f"ID:{source_ids[1]}"],
                         "premises": [
                             "User schedules meetings before 9am",
                             "User mentions waking at 5:30",
                         ],
+                        "action": "create",
+                        "reason_for_entry": "Novel deduction after candidate review",
+                        "search_query": "preference for early mornings",
+                        "searched_conclusion_ids": [],
                     },
                 ]
             },
@@ -280,7 +315,7 @@ class TestCreateObservations:
         )
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
-        assert doc.source_ids == ["premise1", "premise2"]
+        assert doc.source_ids == source_ids
 
     async def test_empty_observations_list_returns_error(
         self, make_tool_context: Callable[..., ToolContext]
@@ -294,220 +329,139 @@ class TestCreateObservations:
         # Handlers may return ToolResult (); str() returns .content.
         assert "empty" in str(result).lower()
 
-    async def test_batch_embedding_failure_falls_back_to_individual_embeds(
+    async def test_create_observations_forwards_complete_admission_provenance(
         self,
         tool_test_data: Any,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """If batch embedding fails but individual embeds succeed, all observations are created."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
+        admitted_batches: list[list[schemas.ConclusionCreate]] = []
 
-        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
-            raise RuntimeError("embedding provider timeout")
-
-        async def succeed_single_embed(_content: str) -> list[float]:
-            return [0.1, 0.2, 0.3]
-
-        created_documents: list[Any] = []
-
-        async def fake_create_documents(
+        async def fake_create_observations(
             _db: AsyncSession,
-            documents: list[Any],
             workspace_name: str,
-            *,
-            observer: str,
-            observed: str,
-            deduplicate: bool = False,
+            observations: list[schemas.ConclusionCreate],
+            embeddings: list[list[float]] | None = None,
         ) -> list[Any]:
-            _ = (workspace_name, observer, observed, deduplicate)
-            created_documents.extend(documents)
-            return documents
+            _ = workspace_name, embeddings
+            admitted_batches.append(observations)
+            return observations
 
         monkeypatch.setattr(
-            "src.utils.agent_tools.embedding_client.simple_batch_embed",
-            fail_batch_embed,
-        )
-        monkeypatch.setattr(
-            "src.utils.agent_tools.embedding_client.embed",
-            succeed_single_embed,
-        )
-        monkeypatch.setattr(
-            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+            "src.utils.agent_tools.crud.create_observations",
+            fake_create_observations,
         )
 
         result = await create_observations(
             observations=[
-                schemas.ObservationInput(content="First obs", level="explicit"),
-                schemas.ObservationInput(content="Second obs", level="explicit"),
-            ],
-            observer=peer1.name,
-            observed=peer2.name,
-            session_name=session.name,
-            workspace_name=workspace.name,
-            message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
-        )
-
-        assert isinstance(result, ObservationsCreatedResult)
-        assert result.created_count == 2
-        assert len(result.failed) == 0
-        assert len(created_documents) == 2
-
-    async def test_batch_embedding_failure_individual_embed_partial_failure(
-        self,
-        tool_test_data: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """If batch embedding fails and some individual embeds also fail, only successful ones are created."""
-        workspace, peer1, peer2, session, _, _ = tool_test_data
-
-        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
-            raise RuntimeError("embedding provider timeout")
-
-        async def embed_per_observation(content: str) -> list[float]:
-            if content == "Fails embed":
-                raise RuntimeError("single-item embed failure")
-            return [0.1, 0.2, 0.3]
-
-        created_documents: list[Any] = []
-
-        async def fake_create_documents(
-            _db: AsyncSession,
-            documents: list[Any],
-            workspace_name: str,
-            *,
-            observer: str,
-            observed: str,
-            deduplicate: bool = False,
-        ) -> list[Any]:
-            _ = (workspace_name, observer, observed, deduplicate)
-            created_documents.extend(documents)
-            return documents
-
-        monkeypatch.setattr(
-            "src.utils.agent_tools.embedding_client.simple_batch_embed",
-            fail_batch_embed,
-        )
-        monkeypatch.setattr(
-            "src.utils.agent_tools.embedding_client.embed",
-            embed_per_observation,
-        )
-        monkeypatch.setattr(
-            "src.utils.agent_tools.crud.create_documents", fake_create_documents
-        )
-
-        result = await create_observations(
-            observations=[
-                schemas.ObservationInput(content="Embeds fine", level="explicit"),
-                schemas.ObservationInput(content="Fails embed", level="explicit"),
-            ],
-            observer=peer1.name,
-            observed=peer2.name,
-            session_name=session.name,
-            workspace_name=workspace.name,
-            message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
-        )
-
-        assert isinstance(result, ObservationsCreatedResult)
-        assert result.created_count == 1
-        assert len(result.failed) == 1
-        assert result.failed[0].content_preview == "Fails embed"
-        assert "Embedding failed" in result.failed[0].error
-        assert len(created_documents) == 1
-        assert created_documents[0].content == "Embeds fine"
-
-    async def test_create_observations_filters_blank_content_before_embedding(
-        self,
-        tool_test_data: Any,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Blank or whitespace-only observations are dropped before embedding/persistence."""
-        workspace, peer1, peer2, session, _, _ = tool_test_data
-        created_documents: list[Any] = []
-
-        async def fake_batch_embed(texts: list[str]) -> list[list[float]]:
-            assert texts == ["trimmed observation"]
-            return [[0.4, 0.5, 0.6]]
-
-        async def fake_create_documents(
-            _db: AsyncSession,
-            documents: list[Any],
-            workspace_name: str,
-            *,
-            observer: str,
-            observed: str,
-            deduplicate: bool = False,
-        ) -> list[Any]:
-            _ = (workspace_name, observer, observed, deduplicate)
-            created_documents.extend(documents)
-            return documents
-
-        monkeypatch.setattr(
-            "src.utils.agent_tools.embedding_client.simple_batch_embed",
-            fake_batch_embed,
-        )
-        monkeypatch.setattr(
-            "src.utils.agent_tools.crud.create_documents", fake_create_documents
-        )
-
-        result = await create_observations(
-            observations=[
-                schemas.ObservationInput(content="   ", level="explicit"),
                 schemas.ObservationInput(
-                    content=" trimmed observation ", level="explicit"
+                    content="First obs",
+                    level="explicit",
+                    action="create",
+                    reason_for_entry="Distinct durable fact",
+                    search_query="First obs",
+                    searched_conclusion_ids=[],
+                ),
+                schemas.ObservationInput(
+                    content="Second obs",
+                    level="explicit",
+                    action="create",
+                    reason_for_entry="Distinct durable fact",
+                    search_query="Second obs",
+                    searched_conclusion_ids=[],
                 ),
             ],
             observer=peer1.name,
             observed=peer2.name,
             session_name=session.name,
             workspace_name=workspace.name,
-            message_ids=[],
+            message_ids=[101, 102],
             message_created_at=str(datetime.now(timezone.utc)),
+            run_id="deriver-run-1",
+            parent_category="deriver",
+            agent_model="test-model",
+            source_tool_call_id="tool-call-1",
+            entry_origin="deriver_agent",
         )
 
         assert isinstance(result, ObservationsCreatedResult)
-        assert result.created_count == 1
-        assert len(result.failed) == 0
-        assert len(created_documents) == 1
-        assert created_documents[0].content == "trimmed observation"
+        assert result.created_count == 2
+        assert len(admitted_batches) == 1
+        first = admitted_batches[0][0]
+        assert first.source_message_ids == [101, 102]
+        assert first.source_tool_call_id == "tool-call-1"
+        assert first.agent_trace_id == "deriver-run-1"
+        assert first.agent_model == "test-model"
+        assert first.entry_origin == "deriver_agent"
 
-    async def test_create_observations_skips_all_blank_content(
+    async def test_create_observations_rejects_missing_agent_model(
         self,
         tool_test_data: Any,
-        monkeypatch: pytest.MonkeyPatch,
     ):
-        """All-blank observations short-circuit without embedding or persistence."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
-        batch_embed = AsyncMock()
-        create_documents = AsyncMock()
-
-        monkeypatch.setattr(
-            "src.utils.agent_tools.embedding_client.simple_batch_embed",
-            batch_embed,
-        )
-        monkeypatch.setattr(
-            "src.utils.agent_tools.crud.create_documents", create_documents
+        observation = schemas.ObservationInput(
+            content="Durable fact",
+            level="explicit",
+            action="create",
+            reason_for_entry="Distinct durable fact",
+            search_query="Durable fact",
+            searched_conclusion_ids=[],
         )
 
-        result = await create_observations(
-            observations=[
-                schemas.ObservationInput(content=" ", level="explicit"),
-                schemas.ObservationInput(content="\n\t", level="explicit"),
-            ],
-            observer=peer1.name,
-            observed=peer2.name,
-            session_name=session.name,
-            workspace_name=workspace.name,
-            message_ids=[],
-            message_created_at=str(datetime.now(timezone.utc)),
+        with pytest.raises(ValueError, match="agent_model"):
+            await create_observations(
+                observations=[observation],
+                observer=peer1.name,
+                observed=peer2.name,
+                session_name=session.name,
+                workspace_name=workspace.name,
+                message_ids=[1],
+                message_created_at=str(datetime.now(timezone.utc)),
+                run_id="run-1",
+                agent_model=None,
+                source_tool_call_id="tool-1",
+                entry_origin="deriver_agent",
+            )
+
+    async def test_observation_input_rejects_blank_content(self):
+        with pytest.raises(ValueError, match="content"):
+            schemas.ObservationInput(
+                content="   ",
+                level="explicit",
+                action="create",
+                reason_for_entry="Distinct durable fact",
+                search_query="blank fact",
+                searched_conclusion_ids=[],
+            )
+
+    async def test_create_observations_rejects_missing_trace_id(
+        self,
+        tool_test_data: Any,
+    ):
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        observation = schemas.ObservationInput(
+            content="Durable fact",
+            level="explicit",
+            action="create",
+            reason_for_entry="Distinct durable fact",
+            search_query="Durable fact",
+            searched_conclusion_ids=[],
         )
 
-        assert isinstance(result, ObservationsCreatedResult)
-        assert result.created_count == 0
-        assert len(result.failed) == 0
-        batch_embed.assert_not_awaited()
-        create_documents.assert_not_awaited()
+        with pytest.raises(ValueError, match="run_id"):
+            await create_observations(
+                observations=[observation],
+                observer=peer1.name,
+                observed=peer2.name,
+                session_name=session.name,
+                workspace_name=workspace.name,
+                message_ids=[1],
+                message_created_at=str(datetime.now(timezone.utc)),
+                run_id=None,
+                agent_model="test-model",
+                source_tool_call_id="tool-1",
+                entry_origin="deriver_agent",
+            )
 
 
 class TestNormalizeObservationId:

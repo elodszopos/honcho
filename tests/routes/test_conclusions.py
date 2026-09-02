@@ -4,11 +4,64 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.models import Peer, Workspace
 
 
 class TestConclusionRoutes:
-    """Test suite for conclusion API endpoints"""
+    """Test suite for conclusion API endpoints."""
+
+    @staticmethod
+    def _admission_fields(
+        *,
+        content: str,
+        searched_ids: list[str] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "action": "create",
+            "target_id": None,
+            "reason_for_entry": "Test fixture represents a durable fact",
+            "search_query": content,
+            "searched_conclusion_ids": searched_ids or [],
+            "source_message_ids": [],
+            "source_tool_call_id": "test-tool-call",
+            "entry_origin": "explicit_agent",
+            "agent_trace_id": "test-agent-trace",
+            "agent_model": "test-agent",
+        }
+
+    def _admit(
+        self,
+        client: TestClient,
+        *,
+        workspace: str,
+        content: str,
+        observer: str,
+        observed: str,
+        session_id: str | None = None,
+    ):
+        query_response = client.post(
+            f"/v3/workspaces/{workspace}/conclusions/query",
+            json={
+                "query": content,
+                "top_k": 10,
+                "filters": {"observer": observer, "observed": observed},
+            },
+        )
+        assert query_response.status_code == 200
+        searched_ids = [row["id"] for row in query_response.json()]
+        conclusion = {
+            "content": content,
+            "observer_id": observer,
+            "observed_id": observed,
+            **self._admission_fields(content=content, searched_ids=searched_ids),
+        }
+        if session_id is not None:
+            conclusion["session_id"] = session_id
+        return client.post(
+            f"/v3/workspaces/{workspace}/conclusions",
+            json={"conclusions": [conclusion]},
+        )
 
     async def _create_collection(
         self,
@@ -229,7 +282,7 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="First conclusion",
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
         )
         db_session.add(doc1)
@@ -240,7 +293,7 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Second conclusion",
-            embedding=[0.2] * 1536,
+            embedding=[0.2] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
         )
         db_session.add(doc2)
@@ -294,7 +347,7 @@ class TestConclusionRoutes:
                 observer=test_peer.name,
                 observed=test_peer2.name,
                 content=f"Conclusion {i}",
-                embedding=[0.1 * i] * 1536,
+                embedding=[0.1 * i] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
             )
             db_session.add(doc)
@@ -346,27 +399,17 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create test conclusions via API (ensures proper vector store integration)
-        create_response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "User loves pizza and pasta",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    },
-                    {
-                        "content": "User dislikes vegetables",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    },
-                ]
-            },
-        )
-        assert create_response.status_code == 201
+        # Admit test conclusions sequentially so each one receives a fresh search.
+        for content in ["User loves pizza and pasta", "User dislikes vegetables"]:
+            create_response = self._admit(
+                client,
+                workspace=test_workspace.name,
+                content=content,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                session_id=test_session.name,
+            )
+            assert create_response.status_code == 201
 
         # Query conclusions
         response = client.post(
@@ -417,21 +460,17 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create multiple conclusions via API (ensures proper vector store integration)
-        conclusions = [
-            {
-                "content": f"Conclusion about topic {i}",
-                "observer_id": test_peer.name,
-                "observed_id": test_peer2.name,
-                "session_id": test_session.name,
-            }
-            for i in range(5)
-        ]
-        create_response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/conclusions",
-            json={"conclusions": conclusions},
-        )
-        assert create_response.status_code == 201
+        # Admit multiple conclusions sequentially.
+        for i in range(5):
+            create_response = self._admit(
+                client,
+                workspace=test_workspace.name,
+                content=f"Conclusion about topic {i}",
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                session_id=test_session.name,
+            )
+            assert create_response.status_code == 201
 
         # Query with top_k=2
         response = client.post(
@@ -476,19 +515,14 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create test conclusion via API (ensures proper vector store integration)
-        create_response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "Test conclusion",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    }
-                ]
-            },
+        # Admit test conclusion through the mandatory search gate.
+        create_response = self._admit(
+            client,
+            workspace=test_workspace.name,
+            content="Test conclusion",
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            session_id=test_session.name,
         )
         assert create_response.status_code == 201
 
@@ -610,7 +644,7 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test conclusion to delete",
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
         )
         db_session.add(doc)
@@ -715,7 +749,7 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test conclusion content",
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
         )
         db_session.add(doc)
@@ -784,7 +818,7 @@ class TestConclusionRoutes:
                     observer=test_peer.name,
                     observed=test_peer2.name,
                     content=f"{level} conclusion {i}",
-                    embedding=[0.1] * 1536,
+                    embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     level=level,
                 )
@@ -843,19 +877,14 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create conclusion via API
-        response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "User prefers dark mode",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    }
-                ]
-            },
+        # Create conclusion through mandatory semantic search admission.
+        response = self._admit(
+            client,
+            workspace=test_workspace.name,
+            content="User prefers dark mode",
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            session_id=test_session.name,
         )
 
         assert response.status_code == 201
@@ -877,7 +906,7 @@ class TestConclusionRoutes:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test creating multiple conclusions in batch"""
+        """Each conclusion in a batch carries its own agent search decision."""
         test_workspace, test_peer = sample_data
 
         # Create another peer
@@ -904,18 +933,21 @@ class TestConclusionRoutes:
                         "observer_id": test_peer.name,
                         "observed_id": test_peer2.name,
                         "session_id": test_session.name,
+                        **self._admission_fields(content="User prefers dark mode"),
                     },
                     {
                         "content": "User works late at night",
                         "observer_id": test_peer.name,
                         "observed_id": test_peer2.name,
                         "session_id": test_session.name,
+                        **self._admission_fields(content="User works late at night"),
                     },
                     {
                         "content": "User enjoys programming",
                         "observer_id": test_peer.name,
                         "observed_id": test_peer2.name,
                         "session_id": test_session.name,
+                        **self._admission_fields(content="User enjoys programming"),
                     },
                 ]
             },
@@ -924,11 +956,11 @@ class TestConclusionRoutes:
         assert response.status_code == 201
         data = response.json()
         assert len(data) == 3
-
-        contents = [obs["content"] for obs in data]
-        assert "User prefers dark mode" in contents
-        assert "User works late at night" in contents
-        assert "User enjoys programming" in contents
+        assert {row["content"] for row in data} == {
+            "User prefers dark mode",
+            "User works late at night",
+            "User enjoys programming",
+        }
 
     @pytest.mark.asyncio
     async def test_create_conclusion_nonexistent_session(
@@ -957,6 +989,7 @@ class TestConclusionRoutes:
                         "observer_id": test_peer.name,
                         "observed_id": test_peer2.name,
                         "session_id": "nonexistent_session",
+                        **self._admission_fields(content="Test conclusion"),
                     }
                 ]
             },
@@ -991,6 +1024,7 @@ class TestConclusionRoutes:
                         "observer_id": "nonexistent_peer",
                         "observed_id": test_peer.name,
                         "session_id": test_session.name,
+                        **self._admission_fields(content="Test conclusion"),
                     }
                 ]
             },
@@ -1080,19 +1114,14 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create conclusion via API (this should auto-create collection)
-        response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "Test conclusion",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    }
-                ]
-            },
+        # Admission should also create the scoped collection.
+        response = self._admit(
+            client,
+            workspace=test_workspace.name,
+            content="Test conclusion",
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            session_id=test_session.name,
         )
 
         assert response.status_code == 201
@@ -1142,12 +1171,14 @@ class TestConclusionRoutes:
                         "observer_id": test_peer.name,
                         "observed_id": test_peer2.name,
                         "session_id": test_session.name,
+                        **self._admission_fields(content="Peer1 observes Peer2"),
                     },
                     {
                         "content": "Peer2 observes Peer3",
                         "observer_id": test_peer2.name,
                         "observed_id": test_peer3.name,
                         "session_id": test_session.name,
+                        **self._admission_fields(content="Peer2 observes Peer3"),
                     },
                 ]
             },
@@ -1156,15 +1187,10 @@ class TestConclusionRoutes:
         assert response.status_code == 201
         data = response.json()
         assert len(data) == 2
-
-        # Verify each conclusion has correct observer/observed
-        obs1 = next(o for o in data if o["content"] == "Peer1 observes Peer2")
-        assert obs1["observer_id"] == test_peer.name
-        assert obs1["observed_id"] == test_peer2.name
-
-        obs2 = next(o for o in data if o["content"] == "Peer2 observes Peer3")
-        assert obs2["observer_id"] == test_peer2.name
-        assert obs2["observed_id"] == test_peer3.name
+        assert {(row["observer_id"], row["observed_id"]) for row in data} == {
+            (test_peer.name, test_peer2.name),
+            (test_peer2.name, test_peer3.name),
+        }
 
     @pytest.mark.asyncio
     async def test_created_conclusions_are_searchable(
@@ -1190,19 +1216,14 @@ class TestConclusionRoutes:
         db_session.add(test_session)
         await db_session.commit()
 
-        # Create conclusion via API
-        create_response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "Unique test content for searchability",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        "session_id": test_session.name,
-                    }
-                ]
-            },
+        # Admit conclusion through mandatory semantic search.
+        create_response = self._admit(
+            client,
+            workspace=test_workspace.name,
+            content="Unique test content for searchability",
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            session_id=test_session.name,
         )
 
         assert create_response.status_code == 201
@@ -1242,19 +1263,13 @@ class TestConclusionRoutes:
         db_session.add(test_peer2)
         await db_session.commit()
 
-        # Create conclusion without session_id
-        response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "User prefers dark mode (global)",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                        # No session_id - this is the key test
-                    }
-                ]
-            },
+        # Admit conclusion without session_id.
+        response = self._admit(
+            client,
+            workspace=test_workspace.name,
+            content="User prefers dark mode (global)",
+            observer=test_peer.name,
+            observed=test_peer2.name,
         )
 
         assert response.status_code == 201
@@ -1303,11 +1318,15 @@ class TestConclusionRoutes:
                         "observer_id": test_peer.name,
                         "observed_id": test_peer2.name,
                         "session_id": test_session.name,
+                        **self._admission_fields(content="Session-scoped conclusion"),
                     },
                     {
                         "content": "Global conclusion without session",
                         "observer_id": test_peer.name,
                         "observed_id": test_peer2.name,
+                        **self._admission_fields(
+                            content="Global conclusion without session"
+                        ),
                         # No session_id
                     },
                 ]
@@ -1317,17 +1336,7 @@ class TestConclusionRoutes:
         assert response.status_code == 201
         data = response.json()
         assert len(data) == 2
-
-        # Find conclusions by content
-        session_conclusion = next(
-            c for c in data if c["content"] == "Session-scoped conclusion"
-        )
-        global_conclusion = next(
-            c for c in data if c["content"] == "Global conclusion without session"
-        )
-
-        assert session_conclusion["session_id"] == test_session.name
-        assert global_conclusion["session_id"] is None
+        assert {row["session_id"] for row in data} == {test_session.name, None}
 
     @pytest.mark.asyncio
     async def test_list_sessionless_conclusions(
@@ -1346,18 +1355,13 @@ class TestConclusionRoutes:
         db_session.add(test_peer2)
         await db_session.commit()
 
-        # Create sessionless conclusion
-        create_response = client.post(
-            f"/v3/workspaces/{test_workspace.name}/conclusions",
-            json={
-                "conclusions": [
-                    {
-                        "content": "Sessionless conclusion for list test",
-                        "observer_id": test_peer.name,
-                        "observed_id": test_peer2.name,
-                    }
-                ]
-            },
+        # Admit sessionless conclusion.
+        create_response = self._admit(
+            client,
+            workspace=test_workspace.name,
+            content="Sessionless conclusion for list test",
+            observer=test_peer.name,
+            observed=test_peer2.name,
         )
         assert create_response.status_code == 201
         created_id = create_response.json()[0]["id"]

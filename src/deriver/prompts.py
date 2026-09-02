@@ -41,6 +41,8 @@ def _custom_instructions_section(custom_instructions: str | None) -> str:
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
+    existing_conclusions: str | None = None,
+    candidate_observation: str | None = None,
     custom_instructions: str | None = None,
 ) -> str:
     """
@@ -49,11 +51,58 @@ def minimal_deriver_prompt(
     Args:
         peer_id: The ID of the user being analyzed.
         messages: All messages in the range (interleaving messages and new turns combined).
+        existing_conclusions: Semantically retrieved candidate conclusions for agent review.
+        candidate_observation: One extracted candidate being evaluated for admission.
 
     Returns:
         Formatted prompt string for observation extraction.
     """
     custom_instructions_section = _custom_instructions_section(custom_instructions)
+    admission_section = ""
+    if existing_conclusions is not None:
+        candidate_section = c(
+            f"""
+            ADMISSION CASES UNDER REVIEW:
+            <admission_cases>
+            {candidate_observation or "(missing -- admit nothing)"}
+            </admission_cases>
+
+            SOURCE-GROUNDING RULES:
+            - Re-read the original messages below before deciding.
+            - Use only message IDs shown in the original messages.
+            - Select the exact target-peer message IDs that support each admitted conclusion.
+            - Never cite a message authored by another peer.
+            - Preserve only claims, qualifiers, scope, negation, and temporal bounds supported by the selected messages.
+            - Return no decision when an extracted candidate overstates or misattributes the source.
+            """
+        )
+        admission_section = c(
+            f"""
+            MANDATORY LOOK-BEFORE-WRITE ADMISSION:
+            - Review every admission case as an independent candidate for its specified observer.
+            - The existing conclusions in each case were retrieved by semantic search before this decision.
+            - Cosine similarity is retrieval only.
+            - Never create, merge, enrich, or discard a memory because of an arbitrary similarity threshold.
+            - Read every retrieved conclusion in that case before proposing an entry.
+            - If none expresses the same durable memory, return `action: "create"` and `target_id: null`.
+            - If one expresses the same memory, return `action: "enrich"` and set `target_id` to that conclusion id.
+            - For enrichment, write the best current formulation using the retrieved conclusion and the new evidence.
+            - Never return a second semantic version of an existing memory.
+            - Never target a conclusion id that is absent from that admission case.
+            - Copy the case's `admission_case_id` into its decision.
+            - Return at most one decision per admission case.
+            - Supply a specific `reason_for_entry` that explains why the result passes the selectivity criteria.
+            - Return no decision for a case when the messages do not justify durable memory.
+            - Return all admitted cases together in one `explicit` list.
+
+            SEARCH RESULTS BY ADMISSION CASE:
+            <existing_conclusions>
+            {existing_conclusions or "(none)"}
+            </existing_conclusions>
+
+            {candidate_section}
+            """
+        )
     return c(
         f"""
 Analyze messages to extract **durable, self-contained facts** about the target peer -- not everything they say, only what is worth remembering weeks from now.
@@ -138,6 +187,8 @@ Negative -- extract nothing, explicit: [] is the correct output:
 - "the user balances agent responsiveness with data integrity" is NOT how to record "I like when things load fast but don't want to lose data" → EXPLICIT: "the user prefers fast loading but not at the cost of losing data" (plain form, not the pompous rewrite)
 
 OUTPUT DISCIPLINE: fewer, better observations beat many marginal ones. An empty extraction is a correct, common, and expected result -- never pad the output to justify the call.
+
+{admission_section}
 
 {custom_instructions_section}
 

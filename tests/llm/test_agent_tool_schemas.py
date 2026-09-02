@@ -18,6 +18,14 @@ def test_generic_create_observations_schema_has_level_specific_requirements() ->
     items = _observation_items_schema("create_observations")
 
     assert items["additionalProperties"] is False
+    assert set(items["required"]) == {
+        "content",
+        "level",
+        "action",
+        "reason_for_entry",
+        "search_query",
+        "searched_conclusion_ids",
+    }
 
     level_requirements = {
         condition["if"]["properties"]["level"]["const"]: condition["then"]["required"]
@@ -40,7 +48,15 @@ def test_deductive_specialist_tool_requires_evidence_fields() -> None:
     assert TOOLS["create_observations_deductive"]["name"] == (
         "create_observations_deductive"
     )
-    assert items["required"] == ["content", "source_ids", "premises"]
+    assert set(items["required"]) == {
+        "content",
+        "source_ids",
+        "premises",
+        "action",
+        "reason_for_entry",
+        "search_query",
+        "searched_conclusion_ids",
+    }
     assert items["properties"]["source_ids"]["minItems"] == 1
     assert items["properties"]["premises"]["minItems"] == 1
 
@@ -51,13 +67,17 @@ def test_inductive_specialist_tool_requires_pattern_fields() -> None:
     assert TOOLS["create_observations_inductive"]["name"] == (
         "create_observations_inductive"
     )
-    assert items["required"] == [
+    assert set(items["required"]) == {
         "content",
         "source_ids",
         "sources",
         "pattern_type",
         "confidence",
-    ]
+        "action",
+        "reason_for_entry",
+        "search_query",
+        "searched_conclusion_ids",
+    }
     assert items["properties"]["source_ids"]["minItems"] == 2
     assert items["properties"]["sources"]["minItems"] == 2
 

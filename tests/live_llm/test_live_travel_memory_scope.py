@@ -5,18 +5,18 @@ import pytest
 from src.config import settings
 from src.deriver.prompts import minimal_deriver_prompt
 from src.llm import honcho_llm_call
-from src.utils.representation import PromptRepresentation
+from src.utils.representation import ExtractedRepresentation
 
 pytestmark = pytest.mark.live_llm
 
 
-async def _extract(message: str) -> PromptRepresentation:
+async def _extract(message: str) -> ExtractedRepresentation:
     model_config = settings.DERIVER.MODEL_CONFIG
     response = await honcho_llm_call(
         model_config=model_config,
         prompt=minimal_deriver_prompt(peer_id="user", messages=f"user: {message}"),
         max_tokens=model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS,
-        response_model=PromptRepresentation,
+        response_model=ExtractedRepresentation,
         json_mode=True,
         max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
         enable_retry=True,
@@ -29,10 +29,13 @@ async def _extract(message: str) -> PromptRepresentation:
 @pytest.mark.asyncio
 async def test_live_deriver_rejects_representative_travel_persona_doctrine() -> None:
     result = await _extract(
-        "For flexible base-camp travel days, prioritize forecast-weighted "
-        "experience quality over route efficiency and accept reasonable "
-        "backtracking. I do not want guided hikes included. Choose parking by "
-        "proximity to the actual planned attractions, not generic venue labels."
+        " ".join(
+            [
+                "For flexible base-camp travel days, prioritize forecast-weighted experience quality over route efficiency",
+                "and accept reasonable backtracking. I do not want guided hikes included. Choose parking by proximity to",
+                "the actual planned attractions, not generic venue labels.",
+            ]
+        )
     )
 
     assert result.explicit == []

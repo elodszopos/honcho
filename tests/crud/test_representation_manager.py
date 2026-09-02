@@ -387,3 +387,37 @@ class TestRepresentationManagerSave:
         assert saved == 0
         mock_embed.assert_not_awaited()
         mock_save.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_internal_save_rejects_deductive_deriver_bypass(self):
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="observed",
+        )
+        observation = DeductiveObservation(
+            conclusion="Inferred conclusion",
+            premises=["premise"],
+            source_ids=["source-id"],
+            created_at=datetime.now(timezone.utc),
+            message_ids=[1],
+            session_name="session",
+        )
+        db = AsyncMock(spec=AsyncSession)
+
+        with (
+            patch(
+                "src.crud.representation.crud.get_or_create_collection",
+                new=AsyncMock(return_value=object()),
+            ),
+            pytest.raises(ValueError, match="Dreamer admission tools"),
+        ):
+            await manager._save_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                db,
+                [observation],
+                embeddings=[[0.1]],
+                _message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(timezone.utc),
+                message_level_configuration=_resolved_config(),
+            )

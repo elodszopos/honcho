@@ -17,7 +17,6 @@ from src.embedding_client import embedding_client
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import EmbeddingCallPurpose
 from src.telemetry.logging import accumulate_metric
-from src.utils.formatting import format_datetime_utc
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -188,7 +187,7 @@ class RepresentationManager:
         dropped = len(all_observations) - headroom
         logger.warning(
             "Per-session observation cap reached for %s/%s (observer=%s, observed=%s): "
-            "%d existing, cap=%d -- dropping %d of %d new observations from this burst",
+            + "%d existing, cap=%d -- dropping %d of %d new observations from this burst",
             self.workspace_name,
             session_name,
             self.observer,
@@ -205,12 +204,13 @@ class RepresentationManager:
         db: AsyncSession,
         all_observations: list[ExplicitObservation | DeductiveObservation],
         embeddings: list[list[float]],
-        message_ids: list[int],
+        _message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
     ) -> int:
-        # get_or_create_collection already handles IntegrityError with rollback and a retry
+        _ = message_created_at
+        # get_or_create_collection handles collection integrity and establishes scope.
         collection = await crud.get_or_create_collection(
             db,
             self.workspace_name,
@@ -218,52 +218,44 @@ class RepresentationManager:
             observed=self.observed,
         )
 
-        # Prepare all documents for bulk creation
-        documents_to_create: list[schemas.DocumentCreate] = []
-        for obs, embedding in zip(all_observations, embeddings, strict=True):
-            # NOTE: will add additional levels of reasoning in the future
-            if isinstance(obs, DeductiveObservation):
-                obs_level = "deductive"
-                obs_content = obs.conclusion
-                obs_premises = obs.premises
-            else:
-                obs_level = "explicit"
-                obs_content = obs.content
-                obs_premises = None
-
-            metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
-                message_ids=message_ids,
-                premises=obs_premises,
-                message_created_at=format_datetime_utc(message_created_at),
+        if any(not isinstance(obs, ExplicitObservation) for obs in all_observations):
+            raise ValueError(
+                "The deriver may persist only search-admitted explicit conclusions; "
+                + "deductive and inductive writes must use the Dreamer admission tools"
             )
 
-            documents_to_create.append(
-                schemas.DocumentCreate(
-                    content=obs_content,
-                    session_name=session_name,
-                    level=obs_level,
-                    metadata=metadata,
-                    embedding=embedding,
-                )
-            )
-
-        # Use bulk creation with optional duplicate detection
-        accepted_documents = await crud.create_documents(
+        admitted = await crud.create_observations(
             db,
-            documents_to_create,
-            self.workspace_name,
-            observer=self.observer,
-            observed=self.observed,
-            deduplicate=settings.DERIVER.DEDUPLICATE,
+            observations=[
+                schemas.ConclusionCreate(
+                    content=obs.content,
+                    observer_id=self.observer,
+                    observed_id=self.observed,
+                    session_id=session_name,
+                    level="explicit",
+                    action=obs.action,
+                    target_id=obs.target_id,
+                    reason_for_entry=obs.reason_for_entry,
+                    search_query=obs.search_query,
+                    searched_conclusion_ids=obs.searched_conclusion_ids,
+                    source_message_ids=obs.message_ids,
+                    source_tool_call_id=None,
+                    entry_origin="deriver_agent",
+                    agent_trace_id=obs.trace_id,
+                    agent_model=obs.model,
+                )
+                for obs in all_observations
+                if isinstance(obs, ExplicitObservation)
+            ],
+            workspace_name=self.workspace_name,
+            embeddings=embeddings,
         )
-
         if message_level_configuration.dream.enabled:
             try:
                 await check_and_schedule_dream(db, collection)
             except Exception as e:
                 logger.warning(f"Failed to check dream scheduling: {e}")
-
-        return len(accepted_documents)
+        return len(admitted)
 
     async def get_working_representation(
         self,

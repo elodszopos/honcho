@@ -4,7 +4,7 @@ These are not part of the public API contract and may change without notice.
 """
 
 from enum import Enum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -56,6 +56,14 @@ class DocumentMetadata(BaseModel):
         default=None,
         description="Confidence level (high, medium, low) -- only applicable for inductive documents",
     )
+    admission: dict[str, Any] | None = Field(
+        default=None,
+        description="Mandatory admission decision and deterministic provenance for new conclusions.",
+    )
+    admission_history: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Prior content and admission envelopes retained across enrichment revisions.",
+    )
 
 
 class DocumentCreate(DocumentBase):
@@ -83,40 +91,67 @@ class DocumentCreate(DocumentBase):
 
 
 class ObservationInput(BaseModel):
-    """Validated observation input from LLM tool calls."""
+    """Validated agent observation plus its search-backed admission decision."""
 
     content: Annotated[str, Field(min_length=1)]
     level: DocumentLevel = "explicit"
-    source_ids: list[str] | None = None
-    premises: list[str] | None = None
-    sources: list[str] | None = None
+    source_ids: list[str] = Field(default_factory=list)
+    premises: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
     pattern_type: (
         Literal["preference", "behavior", "personality", "tendency", "correlation"]
         | None
     ) = None
     confidence: Literal["high", "medium", "low"] | None = None
+    action: Literal["create", "enrich"]
+    target_id: str | None = None
+    reason_for_entry: Annotated[str, Field(min_length=1)]
+    search_query: Annotated[str, Field(min_length=1)]
+    searched_conclusion_ids: list[str]
 
-    @field_validator("content", mode="after")
+    @field_validator("content", "reason_for_entry", "search_query", mode="after")
     @classmethod
-    def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+    def sanitize_required_text(cls, value: str) -> str:
+        cleaned = value.replace("\x00", "").strip()
+        if not cleaned:
+            raise ValueError("value must contain non-whitespace text")
+        return cleaned
+
+    @field_validator("target_id", mode="after")
+    @classmethod
+    def sanitize_target_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("source_ids", "searched_conclusion_ids", mode="after")
+    @classmethod
+    def sanitize_id_list(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
     @model_validator(mode="after")
-    def validate_level_fields(self) -> Self:
-        """Validate that level-specific fields are present when required."""
-        if self.level == "deductive" and not self.source_ids:
-            raise ValueError(
-                "deductive observations require 'source_ids' field with document IDs of premises"
-            )
-        if self.level == "inductive" and not self.source_ids:
-            raise ValueError(
-                "inductive observations require 'source_ids' field with document IDs of sources"
-            )
-        if self.level == "contradiction" and (
-            not self.source_ids or len(self.source_ids) < 2
+    def validate_admission_and_level_fields(self) -> Self:
+        if self.action == "enrich" and not self.target_id:
+            raise ValueError("target_id is required when action is enrich")
+        if self.action == "create" and self.target_id is not None:
+            raise ValueError("target_id is forbidden when action is create")
+        if self.target_id and self.target_id not in self.searched_conclusion_ids:
+            raise ValueError("target_id must be present in searched_conclusion_ids")
+
+        if self.level == "deductive" and (not self.source_ids or not self.premises):
+            raise ValueError("deductive observations require source_ids and premises")
+        if self.level == "inductive" and (
+            len(self.source_ids) < 2 or len(self.sources) < 2 or not self.pattern_type
         ):
             raise ValueError(
-                "contradiction observations require 'source_ids' field with at least 2 IDs of contradicting observations"
+                "inductive observations require at least two source_ids, two sources, and pattern_type"
+            )
+        if self.level == "contradiction" and (
+            len(self.source_ids) < 2 or len(self.sources) < 2
+        ):
+            raise ValueError(
+                "contradiction observations require at least two source_ids and two sources"
             )
         return self
 

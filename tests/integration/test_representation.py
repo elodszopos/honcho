@@ -19,10 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.utils.representation import (
     DeductiveObservation,
-    # DeductiveObservationBase,
     ExplicitObservation,
-    ExplicitObservationBase,
-    PromptRepresentation,
     Representation,
 )
 
@@ -397,60 +394,6 @@ class TestDocumentCreationWorkflow:
         await db_session.flush()
 
         return session
-
-
-@pytest.mark.asyncio
-class TestPromptRepresentationConversion:
-    """Test conversion between PromptRepresentation and Representation"""
-
-    async def test_prompt_representation_to_representation(self):
-        """Test converting PromptRepresentation to Representation.
-
-        Note: In the current architecture, the Deriver only creates explicit observations.
-        Deductive and inductive observations are created by the Dreamer agent.
-        Therefore, from_prompt_representation only converts explicit observations.
-        """
-        prompt_rep = PromptRepresentation(
-            explicit=[
-                ExplicitObservationBase(content="User likes coffee"),
-                ExplicitObservationBase(content="User works remotely"),
-            ],
-        )
-
-        timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-        representation = Representation.from_prompt_representation(
-            prompt_rep,
-            message_ids=[123],
-            session_name="test_session",
-            created_at=timestamp,
-        )
-
-        assert len(representation.explicit) == 2
-        # Deductive observations from PromptRepresentation are not converted
-        # (they would be created directly by the Dreamer via the create_observations tool)
-        assert len(representation.deductive) == 0
-
-        # Check explicit observations
-        assert representation.explicit[0].content == "User likes coffee"
-        assert representation.explicit[0].message_ids == [123]
-        assert representation.explicit[0].session_name == "test_session"
-        assert representation.explicit[1].content == "User works remotely"
-        assert representation.explicit[0].created_at == timestamp
-
-    async def test_empty_prompt_representation_conversion(self):
-        """Test converting empty PromptRepresentation"""
-        empty_prompt_rep = PromptRepresentation()
-        representation = Representation.from_prompt_representation(
-            empty_prompt_rep,
-            message_ids=[1],
-            session_name="test",
-            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        )
-
-        assert representation.is_empty()
-        assert len(representation.explicit) == 0
-        assert len(representation.deductive) == 0
 
 
 @pytest.mark.asyncio

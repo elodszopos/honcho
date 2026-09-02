@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING, Any
-
-from pydantic import BaseModel
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Literal
+from pydantic import BaseModel, Field, model_validator
 
 from .api_types import ConclusionLevel, ConclusionResponse, RepresentationResponse
 from .base import SessionBase
@@ -56,6 +56,55 @@ def _reject_reserved_filter_keys(
 class ConclusionCreateParams(BaseModel):
     content: str
     session_id: str | None = None
+    level: ConclusionLevel = "explicit"
+    action: Literal["create", "enrich"]
+    target_id: str | None = None
+    reason_for_entry: str
+    search_query: str
+    searched_conclusion_ids: list[str]
+    source_message_ids: list[int] = Field(default_factory=list)
+    source_tool_call_id: str | None = None
+    entry_origin: Literal[
+        "deriver_agent",
+        "dreamer_agent",
+        "explicit_agent",
+        "operator_cli",
+        "operator_sdk",
+        "operator_import",
+    ]
+    agent_trace_id: str
+    agent_model: str
+    times_derived: int | None = None
+    source_ids: list[str] | None = None
+    premises: list[str] | None = None
+    sources: list[str] | None = None
+    pattern_type: Literal[
+        "preference", "behavior", "personality", "tendency", "correlation"
+    ] | None = None
+    confidence: Literal["high", "medium", "low"] | None = None
+
+    @model_validator(mode="after")
+    def validate_admission(self) -> "ConclusionCreateParams":
+        if self.action == "create" and self.target_id is not None:
+            raise ValueError("create decisions cannot set target_id")
+        if self.action == "enrich":
+            if self.target_id is None:
+                raise ValueError("enrich decisions require target_id")
+            if self.target_id not in self.searched_conclusion_ids:
+                raise ValueError("target_id must be present in searched_conclusion_ids")
+        if self.entry_origin == "deriver_agent" and not self.source_message_ids:
+            raise ValueError("deriver_agent conclusions require source_message_ids")
+        if self.entry_origin == "dreamer_agent" and not self.source_ids:
+            raise ValueError("dreamer_agent conclusions require source_ids")
+        if self.entry_origin == "explicit_agent" and not (
+            self.source_message_ids or self.source_tool_call_id
+        ):
+            raise ValueError(
+                "explicit_agent conclusions require source_message_ids or source_tool_call_id"
+            )
+        if self.entry_origin.startswith("operator_") and not self.source_tool_call_id:
+            raise ValueError("operator conclusions require source_tool_call_id")
+        return self
 
 
 class Conclusion:
@@ -83,6 +132,8 @@ class Conclusion:
     observed_id: str
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
+    admission: dict[str, Any]
+    admission_history: list[dict[str, Any]]
     created_at: datetime.datetime
 
     def __init__(
@@ -94,6 +145,8 @@ class Conclusion:
         session_id: str | None,
         created_at: datetime.datetime,
         level: ConclusionLevel = "explicit",
+        admission: dict[str, Any] | None = None,
+        admission_history: list[dict[str, Any]] | None = None,
     ) -> None:
         self.id = id
         self.content = content
@@ -101,6 +154,8 @@ class Conclusion:
         self.observed_id = observed_id
         self.session_id = session_id
         self.level = level
+        self.admission = admission or {}
+        self.admission_history = admission_history or []
         self.created_at = created_at
 
     @classmethod
@@ -113,6 +168,8 @@ class Conclusion:
             observed_id=data.observed_id,
             session_id=data.session_id,
             level=data.level,
+            admission=data.admission,
+            admission_history=data.admission_history,
             created_at=data.created_at,
         )
 
@@ -325,69 +382,33 @@ class ConclusionScope:
 
     def create(
         self,
-        conclusions: list[ConclusionCreateParams | dict[str, Any]],
+        conclusions: Sequence[ConclusionCreateParams | dict[str, Any]],
     ) -> list[Conclusion]:
-        """
-        Create conclusions in this scope.
-
-        Args:
-            conclusions: List of conclusions to create.
-                Each conclusion can be a ConclusionCreateParams object or a dictionary
-                with a required 'content' key and an optional 'session_id' key.
-
-        Returns:
-            List of created Conclusion objects
-
-        Example:
-            ```python
-            conclusions = peer.conclusions.create([
-                {"content": "User prefers dark mode", "session_id": "session1"},
-                {"content": "User is interested in AI"},
-            ])
-            ```
-        """
+        """Create or enrich conclusions through the public admission API."""
         self._honcho._ensure_workspace()
 
         def build_conclusion_payload(
             item: ConclusionCreateParams | dict[str, Any],
         ) -> dict[str, Any]:
-            """
-            Build a single conclusion create payload.
-
-            This normalizes both `ConclusionCreateParams` instances and plain dictionaries
-            into the wire format expected by the Honcho API.
-
-            Notes:
-                - `content` is required.
-                - `session_id` is optional; when not provided it is omitted from the payload.
-                - `observer_id` and `observed_id` are always injected from this scope.
-
-            Args:
-                item: A `ConclusionCreateParams` instance or a dict with a required
-                    `content` key and an optional `session_id` key.
-
-            Returns:
-                A dictionary suitable for inclusion in the `conclusions` array for the
-                create conclusions endpoint.
-            """
+            params = (
+                item
+                if isinstance(item, ConclusionCreateParams)
+                else ConclusionCreateParams.model_validate(item)
+            )
+            raw = params.model_dump(exclude_none=True)
             payload: dict[str, Any] = {
+                "content": raw["content"],
                 "observer_id": self.observer,
                 "observed_id": self.observed,
             }
-            if isinstance(item, ConclusionCreateParams):
-                payload["content"] = item.content
-                if item.session_id is not None:
-                    payload["session_id"] = item.session_id
-                return payload
-
-            payload["content"] = item["content"]
-            session_id = item.get("session_id")
+            session_id = raw.pop("session_id", None)
+            raw.pop("content")
             if session_id is not None:
                 payload["session_id"] = session_id
+            payload.update(raw)
             return payload
 
-        conclusion_params = [build_conclusion_payload(c) for c in conclusions]
-
+        conclusion_params = [build_conclusion_payload(item) for item in conclusions]
         data = self._honcho._http.post(
             routes.conclusions(self.workspace_id),
             body={"conclusions": conclusion_params},

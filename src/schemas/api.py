@@ -6,7 +6,7 @@ API contract.
 
 import datetime
 import ipaddress
-from typing import Annotated, Any, Self, cast
+from typing import Annotated, Any, Literal, Self, cast
 from urllib.parse import urlparse
 
 import tiktoken
@@ -455,7 +455,34 @@ class Conclusion(BaseModel):
             "during dreaming)."
         ),
     )
+    admission: dict[str, Any] = Field(validation_alias="internal_metadata")
+    admission_history: list[dict[str, Any]] = Field(validation_alias="internal_metadata")
     created_at: datetime.datetime
+
+    @field_validator("admission", mode="before")
+    @classmethod
+    def extract_admission(cls, metadata: Any) -> dict[str, Any]:
+        if isinstance(metadata, dict):
+            typed_metadata = cast(dict[str, Any], metadata)
+            admission = typed_metadata.get("admission")
+            if isinstance(admission, dict):
+                return cast(dict[str, Any], admission)
+        return {
+            "entry_origin": "legacy_unattributed",
+            "reason_for_entry": (
+                "Created before mandatory admission accountability; no justification was recorded."
+            ),
+        }
+
+    @field_validator("admission_history", mode="before")
+    @classmethod
+    def extract_admission_history(cls, metadata: Any) -> list[dict[str, Any]]:
+        if isinstance(metadata, dict):
+            typed_metadata = cast(dict[str, Any], metadata)
+            history = typed_metadata.get("admission_history")
+            if isinstance(history, list):
+                return cast(list[dict[str, Any]], history)
+        return []
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True,
@@ -486,7 +513,7 @@ class ConclusionQuery(BaseModel):
 
 
 class ConclusionCreate(BaseModel):
-    """Schema for creating a single conclusion."""
+    """One agent- or operator-admitted conclusion with evidence and provenance."""
 
     content: Annotated[str, Field(min_length=1, max_length=65535)]
     observer_id: str = Field(..., description="The peer making the conclusion")
@@ -495,29 +522,108 @@ class ConclusionCreate(BaseModel):
         default=None,
         description="A session ID to store the conclusion in, if specified",
     )
+    level: DocumentLevel = "explicit"
+    action: Literal["create", "enrich"]
+    target_id: str | None = None
+    reason_for_entry: str = Field(min_length=1)
+    search_query: str = Field(min_length=1)
+    searched_conclusion_ids: list[str]
+    source_message_ids: list[int] = Field(default_factory=list)
+    source_tool_call_id: str | None = None
+    entry_origin: Literal[
+        "deriver_agent",
+        "dreamer_agent",
+        "explicit_agent",
+        "operator_cli",
+        "operator_sdk",
+        "operator_import",
+    ] = "explicit_agent"
+    agent_trace_id: str = Field(min_length=1)
+    agent_model: str = Field(min_length=1)
     times_derived: int | None = Field(
         default=None,
-        description="Reinforcement count to carry onto the created conclusion (defaults to 1 when unset). Lets consolidation preserve the accumulated signal of merged conclusions instead of resetting it.",
+        description="Reinforcement count to carry onto the admitted conclusion.",
     )
-    source_ids: list[str] | None = Field(
-        default=None,
-        description="Provenance source ids to carry onto the created conclusion. Lets consolidation union the sources of merged conclusions.",
+    source_ids: list[str] = Field(
+        default_factory=list,
+        description="Source conclusion IDs supporting derived conclusions or imports.",
     )
+    premises: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+    pattern_type: Literal[
+        "preference", "behavior", "personality", "tendency", "correlation"
+    ] | None = None
+    confidence: Literal["high", "medium", "low"] | None = None
 
     _token_count: int = PrivateAttr(default=0)
 
-    @field_validator("content", mode="after")
+    @field_validator(
+        "content",
+        "reason_for_entry",
+        "search_query",
+        "agent_trace_id",
+        "agent_model",
+        mode="after",
+    )
     @classmethod
-    def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+    def sanitize_required_text(cls, value: str) -> str:
+        cleaned = value.replace("\x00", "").strip()
+        if not cleaned:
+            raise ValueError("value must contain non-whitespace text")
+        return cleaned
+
+    @field_validator("target_id", "source_tool_call_id", mode="after")
+    @classmethod
+    def sanitize_optional_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @field_validator("searched_conclusion_ids", "source_ids", mode="after")
+    @classmethod
+    def sanitize_id_list(cls, values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
 
     @model_validator(mode="after")
-    def validate_token_count(self) -> Self:
-        """Validate that content doesn't exceed embedding token limit."""
-        encoding = tiktoken.get_encoding("o200k_base")
-        tokens = encoding.encode(self.content)
-        self._token_count = len(tokens)
+    def validate_admission(self) -> Self:
+        if self.action == "enrich" and not self.target_id:
+            raise ValueError("target_id is required when action is enrich")
+        if self.action == "create" and self.target_id is not None:
+            raise ValueError("target_id is forbidden when action is create")
+        if self.target_id and self.target_id not in self.searched_conclusion_ids:
+            raise ValueError("target_id must be present in searched_conclusion_ids")
 
+        if self.entry_origin == "deriver_agent" and not self.source_message_ids:
+            raise ValueError("deriver_agent conclusions require source_message_ids")
+        if self.entry_origin == "dreamer_agent" and not self.source_ids:
+            raise ValueError("dreamer_agent conclusions require source_ids")
+        if self.entry_origin == "explicit_agent" and not (
+            self.source_message_ids or self.source_tool_call_id
+        ):
+            raise ValueError(
+                "explicit_agent conclusions require source_message_ids or source_tool_call_id"
+            )
+        if self.entry_origin.startswith("operator_") and not self.source_tool_call_id:
+            raise ValueError("operator conclusions require source_tool_call_id")
+
+        if self.level == "deductive" and (not self.source_ids or not self.premises):
+            raise ValueError("deductive conclusions require source_ids and premises")
+        if self.level == "inductive" and (
+            len(self.source_ids) < 2 or len(self.sources) < 2 or not self.pattern_type
+        ):
+            raise ValueError(
+                "inductive conclusions require at least two source_ids, two sources, and pattern_type"
+            )
+        if self.level == "contradiction" and (
+            len(self.source_ids) < 2 or len(self.sources) < 2
+        ):
+            raise ValueError(
+                "contradiction conclusions require at least two source_ids and two sources"
+            )
+
+        encoding = tiktoken.get_encoding("o200k_base")
+        self._token_count = len(encoding.encode(self.content))
         if self._token_count > settings.EMBEDDING.MAX_INPUT_TOKENS:
             raise ValueError(
                 "Content exceeds maximum embedding token limit of "

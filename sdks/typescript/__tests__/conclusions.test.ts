@@ -12,8 +12,27 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { Honcho, Conclusion, ConclusionScope } from '../src'
+import type { ConclusionCreateParams } from '../src'
 import { createTestClient, requireServer } from './setup'
 import { assertConclusionShape } from './helpers'
+
+function operatorConclusion(
+  content: string,
+  sessionId?: ConclusionCreateParams['sessionId']
+): ConclusionCreateParams {
+  return {
+    content,
+    sessionId,
+    action: 'create',
+    reasonForEntry: 'Operator explicitly requested durable storage.',
+    searchQuery: content,
+    searchedConclusionIds: [],
+    sourceToolCallId: 'typescript-sdk-test-operator',
+    entryOrigin: 'operator_sdk',
+    agentTraceId: 'typescript-sdk-test-trace',
+    agentModel: 'typescript-sdk-test-model',
+  }
+}
 
 describe('Conclusions', () => {
   let client: Honcho
@@ -75,10 +94,9 @@ describe('Conclusions', () => {
       const peer = await client.peer('create-single-conclusion-peer', { metadata: {} })
       const session = await client.session('create-single-conclusion-session', { metadata: {} })
 
-      const conclusions = await peer.conclusions.create({
-        content: 'User prefers dark mode',
-        sessionId: session.id,
-      })
+      const conclusions = await peer.conclusions.create(
+        operatorConclusion('User prefers dark mode', session.id)
+      )
 
       expect(conclusions.length).toBe(1)
       expect(conclusions[0]).toBeInstanceOf(Conclusion)
@@ -92,9 +110,9 @@ describe('Conclusions', () => {
       const session = await client.session('create-multi-conclusion-session', { metadata: {} })
 
       const conclusions = await peer.conclusions.create([
-        { content: 'Likes TypeScript', sessionId: session },
-        { content: 'Uses VS Code', sessionId: session.id },
-        { content: 'Prefers tabs over spaces', sessionId: session },
+        operatorConclusion('Likes TypeScript', session),
+        operatorConclusion('Uses VS Code', session.id),
+        operatorConclusion('Prefers tabs over spaces', session),
       ])
 
       expect(conclusions.length).toBe(3)
@@ -109,10 +127,9 @@ describe('Conclusions', () => {
       const session = await client.session('conclusion-target-session', { metadata: {} })
 
       const scope = observer.conclusionsOf(observed)
-      const conclusions = await scope.create({
-        content: 'Observed peer likes coffee',
-        sessionId: session,
-      })
+      const conclusions = await scope.create(
+        operatorConclusion('Observed peer likes coffee', session)
+      )
 
       expect(conclusions[0].observerId).toBe(observer.id)
       expect(conclusions[0].observedId).toBe(observed.id)
@@ -130,8 +147,8 @@ describe('Conclusions', () => {
 
       // Create some conclusions first
       await peer.conclusions.create([
-        { content: 'Conclusion A', sessionId: session },
-        { content: 'Conclusion B', sessionId: session },
+        operatorConclusion('Conclusion A', session),
+        operatorConclusion('Conclusion B', session),
       ])
 
       const page = await peer.conclusions.list()
@@ -151,10 +168,9 @@ describe('Conclusions', () => {
 
       // Create several conclusions
       await peer.conclusions.create(
-        Array.from({ length: 5 }, (_, i) => ({
-          content: `Paginated conclusion ${i + 1}`,
-          sessionId: session,
-        }))
+        Array.from({ length: 5 }, (_, i) =>
+          operatorConclusion(`Paginated conclusion ${i + 1}`, session)
+        )
       )
 
       // Get with small page size using options object
@@ -169,8 +185,8 @@ describe('Conclusions', () => {
       const session2 = await client.session('conclusion-session-2', { metadata: {} })
 
       await peer.conclusions.create([
-        { content: 'Session 1 conclusion', sessionId: session1 },
-        { content: 'Session 2 conclusion', sessionId: session2 },
+        operatorConclusion('Session 1 conclusion', session1),
+        operatorConclusion('Session 2 conclusion', session2),
       ])
 
       const page = await peer.conclusions.list({ page: 1, size: 50, session: session1 })
@@ -187,10 +203,9 @@ describe('Conclusions', () => {
       const target = await client.peer('list-target-target', { metadata: {} })
       const session = await client.session('list-target-session', { metadata: {} })
 
-      await observer.conclusionsOf(target).create({
-        content: 'About the target',
-        sessionId: session,
-      })
+      await observer
+        .conclusionsOf(target)
+        .create(operatorConclusion('About the target', session))
 
       const page = await observer.conclusionsOf(target).list()
       const conclusions = page.items
@@ -214,9 +229,9 @@ describe('Conclusions', () => {
 
       // Create conclusions with distinct topics
       await peer.conclusions.create([
-        { content: 'User enjoys programming in Python', sessionId: session },
-        { content: 'User likes hiking in mountains', sessionId: session },
-        { content: 'User prefers tea over coffee', sessionId: session },
+        operatorConclusion('User enjoys programming in Python', session),
+        operatorConclusion('User likes hiking in mountains', session),
+        operatorConclusion('User prefers tea over coffee', session),
       ])
 
       const results = await peer.conclusions.query('programming languages')
@@ -230,10 +245,9 @@ describe('Conclusions', () => {
       const session = await client.session('topk-conclusion-session', { metadata: {} })
 
       await peer.conclusions.create(
-        Array.from({ length: 10 }, (_, i) => ({
-          content: `Conclusion about topic ${i}`,
-          sessionId: session,
-        }))
+        Array.from({ length: 10 }, (_, i) =>
+          operatorConclusion(`Conclusion about topic ${i}`, session)
+        )
       )
 
       const results = await peer.conclusions.query('topic', 3)
@@ -245,10 +259,9 @@ describe('Conclusions', () => {
       const peer = await client.peer('distance-conclusion-peer', { metadata: {} })
       const session = await client.session('distance-conclusion-session', { metadata: {} })
 
-      await peer.conclusions.create({
-        content: 'Very specific unique content xyz123',
-        sessionId: session,
-      })
+      await peer.conclusions.create(
+        operatorConclusion('Very specific unique content xyz123', session)
+      )
 
       const results = await peer.conclusions.query(
         'specific unique xyz123',
@@ -264,10 +277,9 @@ describe('Conclusions', () => {
       const target = await client.peer('query-target-target', { metadata: {} })
       const session = await client.session('query-target-session', { metadata: {} })
 
-      await observer.conclusionsOf(target).create({
-        content: 'Target likes machine learning',
-        sessionId: session,
-      })
+      await observer
+        .conclusionsOf(target)
+        .create(operatorConclusion('Target likes machine learning', session))
 
       const results = await observer.conclusionsOf(target).query('ML AI')
 
@@ -342,10 +354,9 @@ describe('Conclusions', () => {
       const peer = await client.peer('delete-conclusion-peer', { metadata: {} })
       const session = await client.session('delete-conclusion-session', { metadata: {} })
 
-      const [conclusion] = await peer.conclusions.create({
-        content: 'To be deleted',
-        sessionId: session,
-      })
+      const [conclusion] = await peer.conclusions.create(
+        operatorConclusion('To be deleted', session)
+      )
 
       // Delete it
       await peer.conclusions.delete(conclusion.id)
@@ -366,10 +377,9 @@ describe('Conclusions', () => {
       const peer = await client.peer('repr-self-scope-peer', { metadata: {} })
       const session = await client.session('repr-self-scope-session', { metadata: {} })
 
-      await peer.conclusions.create({
-        content: 'User is a software engineer',
-        sessionId: session,
-      })
+      await peer.conclusions.create(
+        operatorConclusion('User is a software engineer', session)
+      )
 
       const representation = await peer.conclusions.representation()
 
@@ -381,10 +391,9 @@ describe('Conclusions', () => {
       const target = await client.peer('repr-target-scope-target', { metadata: {} })
       const session = await client.session('repr-target-scope-session', { metadata: {} })
 
-      await observer.conclusionsOf(target).create({
-        content: 'Target is friendly',
-        sessionId: session,
-      })
+      await observer
+        .conclusionsOf(target)
+        .create(operatorConclusion('Target is friendly', session))
 
       const representation = await observer
         .conclusionsOf(target)
@@ -435,10 +444,12 @@ describe('Conclusions', () => {
       const peer = await client.peer('tostring-conclusion-peer', { metadata: {} })
       const session = await client.session('tostring-conclusion-session', { metadata: {} })
 
-      const [conclusion] = await peer.conclusions.create({
-        content: 'A longer conclusion that should be truncated in toString',
-        sessionId: session,
-      })
+      const [conclusion] = await peer.conclusions.create(
+        operatorConclusion(
+          'A longer conclusion that should be truncated in toString',
+          session
+        )
+      )
 
       const str = conclusion.toString()
 
@@ -488,10 +499,9 @@ describe('Conclusions', () => {
       const peer = await client.peer('sessionless-create-peer', { metadata: {} })
 
       // Create conclusion without sessionId
-      const conclusions = await peer.conclusions.create({
-        content: 'Global conclusion without session',
-        // No sessionId - this is the key test
-      })
+      const conclusions = await peer.conclusions.create(
+        operatorConclusion('Global conclusion without session')
+      )
 
       expect(conclusions.length).toBe(1)
       expect(conclusions[0]).toBeInstanceOf(Conclusion)
@@ -503,9 +513,9 @@ describe('Conclusions', () => {
       const peer = await client.peer('sessionless-multi-peer', { metadata: {} })
 
       const conclusions = await peer.conclusions.create([
-        { content: 'Global observation 1' },
-        { content: 'Global observation 2' },
-        { content: 'Global observation 3' },
+        operatorConclusion('Global observation 1'),
+        operatorConclusion('Global observation 2'),
+        operatorConclusion('Global observation 3'),
       ])
 
       expect(conclusions.length).toBe(3)
@@ -521,8 +531,8 @@ describe('Conclusions', () => {
       })
 
       const conclusions = await peer.conclusions.create([
-        { content: 'Session-scoped conclusion', sessionId: session },
-        { content: 'Global conclusion without session' },
+        operatorConclusion('Session-scoped conclusion', session),
+        operatorConclusion('Global conclusion without session'),
       ])
 
       expect(conclusions.length).toBe(2)
@@ -542,9 +552,9 @@ describe('Conclusions', () => {
       const peer = await client.peer('sessionless-list-peer', { metadata: {} })
 
       // Create a sessionless conclusion
-      const [created] = await peer.conclusions.create({
-        content: 'Sessionless conclusion for list test',
-      })
+      const [created] = await peer.conclusions.create(
+        operatorConclusion('Sessionless conclusion for list test')
+      )
 
       // List all conclusions (no session filter)
       const page = await peer.conclusions.list()

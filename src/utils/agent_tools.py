@@ -4,7 +4,7 @@ import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -26,7 +26,12 @@ from src.telemetry.events import (
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
-from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
+from src.utils.types import (
+    ToolResult,
+    embedding_call_purpose,
+    get_current_iteration,
+    get_current_provider_tool_call_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +74,50 @@ def _normalized_observation_input(
 ) -> schemas.ObservationInput:
     """Return an observation input with content normalized for persistence/embedding."""
     return obs.model_copy(update={"content": obs.content.strip()})
+
+
+_ADMISSION_REQUIRED = [
+    "action",
+    "reason_for_entry",
+    "search_query",
+    "searched_conclusion_ids",
+]
+
+
+def _admission_properties() -> dict[str, Any]:
+    return {
+        "action": {
+            "type": "string",
+            "enum": ["create", "enrich"],
+            "description": (
+                "Choose create only when search found no conclusion to enrich; "
+                "choose enrich when this replaces a searched conclusion."
+            ),
+        },
+        "target_id": {
+            "type": "string",
+            "description": (
+                "Required for enrich and forbidden for create. Must be one of "
+                "searched_conclusion_ids."
+            ),
+        },
+        "reason_for_entry": {
+            "type": "string",
+            "description": "Specific justification for creating or enriching this conclusion.",
+        },
+        "search_query": {
+            "type": "string",
+            "description": "The exact semantic search query used before this decision.",
+        },
+        "searched_conclusion_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Every candidate ID inspected before deciding. Use an empty list "
+                "only when the search returned no candidates."
+            ),
+        },
+    }
 
 
 def _base_observation_properties() -> dict[str, Any]:
@@ -129,6 +178,7 @@ def _base_observation_properties() -> dict[str, Any]:
                 + "'medium' for 3-4, 'low' for 2"
             ),
         },
+        **_admission_properties(),
     }
 
 
@@ -136,7 +186,7 @@ def _generic_observation_item_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": _base_observation_properties(),
-        "required": ["content", "level"],
+        "required": ["content", "level", *_ADMISSION_REQUIRED],
         "additionalProperties": False,
         "allOf": [
             {
@@ -222,8 +272,9 @@ def _deductive_observation_item_schema() -> dict[str, Any]:
                 "minItems": 1,
                 "description": "Required human-readable premise text matching the source observations",
             },
+            **_admission_properties(),
         },
-        "required": ["content", "source_ids", "premises"],
+        "required": ["content", "source_ids", "premises", *_ADMISSION_REQUIRED],
         "additionalProperties": False,
     }
 
@@ -264,8 +315,16 @@ def _inductive_observation_item_schema() -> dict[str, Any]:
                 "enum": ["high", "medium", "low"],
                 "description": "Required confidence level based on evidence count",
             },
+            **_admission_properties(),
         },
-        "required": ["content", "source_ids", "sources", "pattern_type", "confidence"],
+        "required": [
+            "content",
+            "source_ids",
+            "sources",
+            "pattern_type",
+            "confidence",
+            *_ADMISSION_REQUIRED,
+        ],
         "additionalProperties": False,
     }
 
@@ -856,30 +915,20 @@ async def create_observations(
     message_created_at: str,
     run_id: str | None = None,
     parent_category: str | None = None,
+    *,
+    agent_model: str | None,
+    source_tool_call_id: str | None,
+    entry_origin: Literal["deriver_agent", "dreamer_agent"],
 ) -> ObservationsCreatedResult:
-    """
-    Create multiple observations (documents) in the memory system in a single call.
-
-    Uses short-lived DB sessions to avoid holding connections during embedding API calls.
-
-    Args:
-        observations: List of validated observation inputs
-        observer: The peer making the observation
-        observed: The peer being observed
-        session_name: Session identifier
-        workspace_name: Workspace identifier
-        message_ids: List of message IDs these observations are based on
-        message_created_at: Timestamp of the message that triggered these observations
-        run_id: Agent run id, threaded onto the embedding-call ContextVar so
-            EmbeddingCallCompletedEvents emitted here can be joined back to
-            the originating agent run.
-
-    Returns:
-        ObservationsCreatedResult with created count and any per-observation failures
-    """
+    """Persist one search-backed agent decision per observation."""
+    _ = message_created_at
     if not observations:
         logger.warning("create_observations called with empty list")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
+    if not run_id:
+        raise ValueError("Agent observation admission requires a run_id")
+    if not agent_model or not agent_model.strip():
+        raise ValueError("Agent observation admission requires an agent_model")
 
     normalized_observations = [
         _normalized_observation_input(obs)
@@ -890,118 +939,56 @@ async def create_observations(
         logger.info("No non-empty observations to create")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
-    # Ensure collection exists (short DB scope)
-    async with tracked_db("create_observations.collection") as db:
-        await crud.get_or_create_collection(
-            db,
-            workspace_name,
-            observer=observer,
-            observed=observed,
-        )
-
-    # Compute embeddings (no DB needed)
-    contents = [obs.content for obs in normalized_observations]
-    embeddings_by_index: dict[int, list[float]] | None = None
-    try:
-        with embedding_call_purpose(
-            EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
-            workspace_name=workspace_name,
-            run_id=run_id,
-            parent_category=parent_category,
-        ):
-            embeddings = await embedding_client.simple_batch_embed(contents)
-        embeddings_by_index = dict(
-            zip(range(len(normalized_observations)), embeddings, strict=True)
-        )
-    except Exception as e:
-        logger.warning(
-            "Batch embedding failed for create_observations; falling back to per-observation embedding: %s",
-            e,
-        )
-
-    # Build document objects with pre-computed embeddings
-    documents: list[schemas.DocumentCreate] = []
-    failed: list[ObservationFailure] = []
-    for i, obs in enumerate(normalized_observations):
-        embedding: list[float]
-        if embeddings_by_index is not None:
-            embedding = embeddings_by_index[i]
-        else:
-            try:
-                with embedding_call_purpose(
-                    EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
-                    workspace_name=workspace_name,
-                    run_id=run_id,
-                    parent_category=parent_category,
-                ):
-                    embedding = await embedding_client.embed(obs.content)
-            except Exception as e:
-                logger.warning(
-                    "Error embedding observation content for level '%s': %s",
-                    obs.level,
-                    e,
-                )
-                failed.append(
-                    ObservationFailure(
-                        content_preview=obs.content[:50],
-                        error=f"Embedding failed: {e}",
-                    )
-                )
-                continue
-
-        # Build metadata with level-specific fields
-        metadata = schemas.DocumentMetadata(
-            message_ids=message_ids,
-            message_created_at=message_created_at,
-            source_ids=obs.source_ids
-            if obs.level in ("deductive", "inductive", "contradiction")
-            else None,
-            premises=obs.premises if obs.level == "deductive" else None,
-            sources=obs.sources
-            if obs.level in ("inductive", "contradiction")
-            else None,
-            pattern_type=obs.pattern_type if obs.level == "inductive" else None,
-            confidence=(obs.confidence or "medium")
-            if obs.level == "inductive"
-            else None,
-        )
-
-        doc = schemas.DocumentCreate(
+    admitted = [
+        schemas.ConclusionCreate(
             content=obs.content,
-            session_name=session_name,
+            observer_id=observer,
+            observed_id=observed,
+            session_id=session_name,
             level=obs.level,
-            metadata=metadata,
-            embedding=embedding,
-            source_ids=obs.source_ids
-            if obs.level in ("deductive", "inductive", "contradiction")
-            else None,
+            action=obs.action,
+            target_id=obs.target_id,
+            reason_for_entry=obs.reason_for_entry,
+            search_query=obs.search_query,
+            searched_conclusion_ids=obs.searched_conclusion_ids,
+            source_message_ids=message_ids,
+            source_tool_call_id=source_tool_call_id,
+            entry_origin=entry_origin,
+            agent_trace_id=run_id,
+            agent_model=agent_model,
+            source_ids=obs.source_ids,
+            premises=obs.premises,
+            sources=obs.sources,
+            pattern_type=obs.pattern_type,
+            confidence=obs.confidence,
         )
-        documents.append(doc)
+        for obs in normalized_observations
+    ]
 
-    # Bulk create all documents (short DB scope)
-    accepted: list[schemas.DocumentCreate] = []
-    if documents:
-        async with tracked_db("create_observations.save") as db:
-            accepted = await crud.create_documents(
+    with embedding_call_purpose(
+        EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
+        workspace_name=workspace_name,
+        run_id=run_id,
+        parent_category=parent_category,
+    ):
+        async with tracked_db("create_observations.admit") as db:
+            created = await crud.create_observations(
                 db,
-                documents=documents,
                 workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-                deduplicate=True,
+                observations=admitted,
             )
-        logger.info(
-            "Created %d observations in %s/%s/%s",
-            len(accepted),
-            workspace_name,
-            observer,
-            observed,
-        )
 
+    logger.info(
+        "Admitted %d observations in %s/%s/%s",
+        len(created),
+        workspace_name,
+        observer,
+        observed,
+    )
     return ObservationsCreatedResult(
-        created_count=len(accepted),
-        created_levels=[doc.level for doc in accepted],
-        failed=failed,
+        created_count=len(created),
+        created_levels=[doc.level or "explicit" for doc in created],
+        failed=[],
     )
 
 
@@ -1287,6 +1274,7 @@ class ToolContext:
     # Telemetry context fields
     run_id: str | None = None
     agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
+    agent_model: str | None = None
     parent_category: str | None = None  # Parent category for CloudEvents
 
 
@@ -1334,6 +1322,16 @@ async def _handle_create_observations_impl(
                 if isinstance(source_id, str):
                     normalized_source_ids.append(_normalize_observation_id(source_id))
             obs["source_ids"] = normalized_source_ids
+        searched_ids = obs.get("searched_conclusion_ids")
+        if isinstance(searched_ids, list):
+            obs["searched_conclusion_ids"] = [
+                _normalize_observation_id(value)
+                for value in cast(list[Any], searched_ids)
+                if isinstance(value, str)
+            ]
+        target_id = obs.get("target_id")
+        if isinstance(target_id, str):
+            obs["target_id"] = _normalize_observation_id(target_id)
     # Validate observations individually so valid ones are still processed
     observations: list[schemas.ObservationInput] = []
     validation_failures: list[ObservationFailure] = []
@@ -1365,10 +1363,17 @@ async def _handle_create_observations_impl(
         )
         return f"ERROR: All observations failed validation: {failure_details}"
 
-    # Determine message context
+    # Link explicit observations only to messages authored by the observed peer.
     if ctx.current_messages:
-        message_ids = [msg.id for msg in ctx.current_messages]
-        message_created_at = str(ctx.current_messages[-1].created_at)
+        source_messages = [
+            message
+            for message in ctx.current_messages
+            if message.peer_name == ctx.observed
+        ]
+        if not source_messages:
+            return "ERROR: No observed-peer source messages are available"
+        message_ids = [message.id for message in source_messages]
+        message_created_at = str(source_messages[-1].created_at)
     else:
         message_ids = []
         message_created_at = utc_now_iso()
@@ -1385,6 +1390,11 @@ async def _handle_create_observations_impl(
             message_created_at=message_created_at,
             run_id=ctx.run_id,
             parent_category=ctx.parent_category,
+            agent_model=ctx.agent_model,
+            source_tool_call_id=get_current_provider_tool_call_id(),
+            entry_origin=(
+                "deriver_agent" if ctx.current_messages else "dreamer_agent"
+            ),
         )
 
     # Merge validation and embedding failures
@@ -2348,6 +2358,7 @@ async def create_tool_executor(
     configuration: ResolvedConfiguration | None = None,
     run_id: str | None = None,
     agent_type: str | None = None,
+    agent_model: str | None = None,
     parent_category: str | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
@@ -2370,6 +2381,7 @@ async def create_tool_executor(
         configuration: Resolved configuration for checking feature flags (optional)
         run_id: Optional run ID for telemetry correlation
         agent_type: Optional agent type for telemetry (dialectic, deriver, dreamer)
+        agent_model: Exact model identifier used for admission decisions
         parent_category: Optional parent category for CloudEvents
 
     Returns:
@@ -2391,6 +2403,7 @@ async def create_tool_executor(
         configuration=configuration,
         run_id=run_id,
         agent_type=agent_type,
+        agent_model=agent_model,
         parent_category=parent_category,
     )
 

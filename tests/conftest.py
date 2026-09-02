@@ -693,9 +693,8 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
     from unittest.mock import AsyncMock
 
     from src.utils.representation import (
-        # DeductiveObservationBase,
-        ExplicitObservationBase,
-        PromptRepresentation,
+        ExtractedObservation,
+        ExtractedRepresentation,
     )
 
     def create_mock_response(
@@ -712,16 +711,10 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
         elif response_model:
             # For structured responses, create appropriate mock objects
             if getattr(response_model, "__name__", "") == "ReasoningResponse":
-                _rep = PromptRepresentation(
+                _rep = ExtractedRepresentation(
                     explicit=[
-                        ExplicitObservationBase(content="Test explicit observation")
+                        ExtractedObservation(content="Test explicit observation")
                     ],
-                    # deductive=[
-                    #     DeductiveObservationBase(
-                    #         conclusion="Test deductive conclusion",
-                    #         premises=["Test premise 1", "Test premise 2"],
-                    #     ),
-                    # ],
                 )
                 mock_response = MagicMock(wraps=_rep)
                 # Add the _response attribute that contains thinking (used in the actual code)

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from src.exceptions import ValidationException
 from src.llm.backends.openai import OpenAIBackend
-from src.utils.representation import PromptRepresentation
+from src.utils.representation import ExtractedRepresentation
 
 
 def _await_kwargs(mock_method: Any) -> dict[str, Any]:
@@ -715,12 +715,12 @@ async def test_structured_output_json_schema_rejected_returns_empty_without_seco
         model="glm-4.6",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
-        response_format=PromptRepresentation,
+        response_format=ExtractedRepresentation,
     )
 
     assert client.chat.completions.parse.await_count == 1
     assert client.chat.completions.create.await_count == 0  # no second request
-    assert isinstance(result.content, PromptRepresentation)
+    assert isinstance(result.content, ExtractedRepresentation)
     assert result.content.explicit == []
 
 
@@ -775,7 +775,7 @@ async def test_structured_output_transient_parse_error_propagates_for_retry(
             model="glm-4.6",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=100,
-            response_format=PromptRepresentation,
+            response_format=ExtractedRepresentation,
         )
 
     assert client.chat.completions.create.await_count == 0  # no second request
@@ -816,7 +816,7 @@ async def test_structured_output_json_object_mode_request_shape() -> None:
 @pytest.mark.asyncio
 async def test_structured_output_json_object_mode_repairs_markdown() -> None:
     """A provider that ignores json_object and returns prose must not crash —
-    PromptRepresentation repairs to an empty representation, not an exception."""
+    ExtractedRepresentation repairs to an empty representation, not an exception."""
     client = Mock()
     client.chat.completions.parse = AsyncMock()
     client.chat.completions.create = AsyncMock(
@@ -830,11 +830,11 @@ async def test_structured_output_json_object_mode_repairs_markdown() -> None:
         model="glm-4.6",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
-        response_format=PromptRepresentation,
+        response_format=ExtractedRepresentation,
         extra_params={"structured_output_mode": "json_object"},
     )
 
-    assert isinstance(result.content, PromptRepresentation)
+    assert isinstance(result.content, ExtractedRepresentation)
 
 
 @pytest.mark.asyncio
@@ -852,11 +852,11 @@ async def test_structured_output_json_object_empty_content_returns_empty() -> No
         model="glm-4.6",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
-        response_format=PromptRepresentation,
+        response_format=ExtractedRepresentation,
         extra_params={"structured_output_mode": "json_object"},
     )
 
-    assert isinstance(result.content, PromptRepresentation)
+    assert isinstance(result.content, ExtractedRepresentation)
     assert result.content.explicit == []
     # Usage from the (empty) response is preserved, not zeroed.
     assert result.input_tokens == 10

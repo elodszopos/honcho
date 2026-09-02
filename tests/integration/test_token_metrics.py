@@ -32,7 +32,12 @@ from src.telemetry.prometheus.metrics import (
     deriver_tokens_processed_counter,
     dialectic_tokens_processed_counter,
 )
-from src.utils.representation import ExplicitObservationBase, PromptRepresentation
+from src.utils.representation import (
+    AdmissionDecision,
+    AdmissionRepresentation,
+    ExtractedObservation,
+    ExtractedRepresentation,
+)
 from src.utils.summarizer import (
     SummaryType,
     _create_and_save_summary,
@@ -177,18 +182,43 @@ def create_test_configuration() -> ResolvedConfiguration:
     )
 
 
-def create_mock_deriver_response(
-    output_tokens: int = 42,
-) -> HonchoLLMCallResponse[PromptRepresentation]:
-    """Create a mock LLM response for the deriver."""
-    return HonchoLLMCallResponse(
-        content=PromptRepresentation(
-            explicit=[ExplicitObservationBase(content="Test observation from deriver")],
+def create_mock_deriver_responses(
+    source_message_id: int,
+    *,
+    extraction_output_tokens: int = 42,
+    admission_output_tokens: int = 7,
+) -> tuple[
+    HonchoLLMCallResponse[ExtractedRepresentation],
+    HonchoLLMCallResponse[AdmissionRepresentation],
+]:
+    """Create extraction and admission responses for the deriver."""
+    extraction = HonchoLLMCallResponse(
+        content=ExtractedRepresentation(
+            explicit=[
+                ExtractedObservation(content="Test observation from deriver")
+            ],
         ),
         input_tokens=100,
-        output_tokens=output_tokens,
+        output_tokens=extraction_output_tokens,
         finish_reasons=["end_turn"],
     )
+    admission = HonchoLLMCallResponse(
+        content=AdmissionRepresentation(
+            explicit=[
+                AdmissionDecision(
+                    admission_case_id=0,
+                    content="Test observation from deriver",
+                    action="create",
+                    reason_for_entry="Durable test fact absent from searched candidates.",
+                    source_message_ids=[source_message_id],
+                )
+            ]
+        ),
+        input_tokens=40,
+        output_tokens=admission_output_tokens,
+        finish_reasons=["end_turn"],
+    )
+    return extraction, admission
 
 
 def create_mock_dialectic_response(
@@ -231,9 +261,13 @@ class TestDeriverIngestionMetrics:
             db_session, workspace.name, session.name, peer.name, count=1
         )
 
-        expected_output_tokens = 42
-        mock_response = create_mock_deriver_response(
-            output_tokens=expected_output_tokens
+        extraction_output_tokens = 42
+        admission_output_tokens = 7
+        expected_output_tokens = extraction_output_tokens + admission_output_tokens
+        mock_responses = create_mock_deriver_responses(
+            messages[0].id,
+            extraction_output_tokens=extraction_output_tokens,
+            admission_output_tokens=admission_output_tokens,
         )
 
         # Capture metrics before
@@ -249,7 +283,7 @@ class TestDeriverIngestionMetrics:
         with (
             patch(
                 "src.deriver.deriver.honcho_llm_call",
-                new=AsyncMock(return_value=mock_response),
+                new=AsyncMock(side_effect=mock_responses),
             ),
             patch(
                 "src.crud.representation.RepresentationManager.save_representation",
@@ -290,7 +324,7 @@ class TestDeriverIngestionMetrics:
             db_session, workspace.name, session.name, peer.name, count=1
         )
 
-        mock_response = create_mock_deriver_response()
+        mock_responses = create_mock_deriver_responses(messages[0].id)
 
         # Get expected prompt tokens
         expected_prompt_tokens = estimate_minimal_deriver_prompt_tokens()
@@ -306,7 +340,7 @@ class TestDeriverIngestionMetrics:
         with (
             patch(
                 "src.deriver.deriver.honcho_llm_call",
-                new=AsyncMock(return_value=mock_response),
+                new=AsyncMock(side_effect=mock_responses),
             ),
             patch(
                 "src.crud.representation.RepresentationManager.save_representation",
@@ -350,7 +384,7 @@ class TestDeriverIngestionMetrics:
             content_prefix="Hello this is a test message",
         )
 
-        mock_response = create_mock_deriver_response()
+        mock_responses = create_mock_deriver_responses(messages[0].id)
 
         labels = {
             "namespace": "test",
@@ -363,7 +397,7 @@ class TestDeriverIngestionMetrics:
         with (
             patch(
                 "src.deriver.deriver.honcho_llm_call",
-                new=AsyncMock(return_value=mock_response),
+                new=AsyncMock(side_effect=mock_responses),
             ),
             patch(
                 "src.crud.representation.RepresentationManager.save_representation",

@@ -56,6 +56,34 @@ export interface ConclusionCreateParams {
   content: string
   /** The session this conclusion relates to (ID string or Session object) */
   sessionId?: string | Session
+  level?: ConclusionLevel
+  action: 'create' | 'enrich'
+  targetId?: string
+  reasonForEntry: string
+  searchQuery: string
+  searchedConclusionIds: string[]
+  sourceMessageIds?: number[]
+  sourceToolCallId?: string
+  entryOrigin:
+    | 'deriver_agent'
+    | 'dreamer_agent'
+    | 'explicit_agent'
+    | 'operator_cli'
+    | 'operator_sdk'
+    | 'operator_import'
+  agentTraceId: string
+  agentModel: string
+  timesDerived?: number
+  sourceIds?: string[]
+  premises?: string[]
+  sources?: string[]
+  patternType?:
+    | 'preference'
+    | 'behavior'
+    | 'personality'
+    | 'tendency'
+    | 'correlation'
+  confidence?: 'high' | 'medium' | 'low'
 }
 
 /**
@@ -76,6 +104,8 @@ export class Conclusion {
    * dreaming.
    */
   readonly level: ConclusionLevel
+  readonly admission: Record<string, unknown>
+  readonly admissionHistory: Array<Record<string, unknown>>
   readonly createdAt: string
 
   constructor(
@@ -85,7 +115,9 @@ export class Conclusion {
     observedId: string,
     sessionId: string | null,
     createdAt: string,
-    level: ConclusionLevel = 'explicit'
+    level: ConclusionLevel = 'explicit',
+    admission: Record<string, unknown> = {},
+    admissionHistory: Array<Record<string, unknown>> = []
   ) {
     this.id = id
     this.content = content
@@ -93,6 +125,8 @@ export class Conclusion {
     this.observedId = observedId
     this.sessionId = sessionId
     this.level = level
+    this.admission = admission
+    this.admissionHistory = admissionHistory
     this.createdAt = createdAt
   }
 
@@ -104,7 +138,9 @@ export class Conclusion {
       data.observed_id,
       data.session_id,
       data.created_at,
-      data.level
+      data.level,
+      data.admission,
+      data.admission_history
     )
   }
 
@@ -179,12 +215,7 @@ export class ConclusionScope {
   }
 
   private async _create(params: {
-    conclusions: Array<{
-      content: string
-      session_id: string | null
-      observer_id: string
-      observed_id: string
-    }>
+    conclusions: Array<Record<string, unknown>>
   }): Promise<ConclusionResponse[]> {
     await this._ensureWorkspace()
     return this._http.post<ConclusionResponse[]>(
@@ -323,30 +354,80 @@ export class ConclusionScope {
     await this._delete(conclusionId)
   }
 
-  /**
-   * Create conclusions in this scope.
-   */
+  /** Create or enrich conclusions through the public admission API. */
   async create(
     conclusions: ConclusionCreateParams | ConclusionCreateParams[]
   ): Promise<Conclusion[]> {
     const conclusionArray = Array.isArray(conclusions)
       ? conclusions
       : [conclusions]
+    const requestConclusions: Array<Record<string, unknown>> = []
 
-    const requestConclusions = conclusionArray.map((obs) => ({
-      content: obs.content,
-      session_id:
+    for (const obs of conclusionArray) {
+      if (obs.action === 'create' && obs.targetId !== undefined) {
+        throw new Error('create decisions cannot set targetId')
+      }
+      if (obs.action === 'enrich') {
+        if (obs.targetId === undefined) {
+          throw new Error('enrich decisions require targetId')
+        }
+        if (!obs.searchedConclusionIds.includes(obs.targetId)) {
+          throw new Error('targetId must be present in searchedConclusionIds')
+        }
+      }
+      if (
+        obs.entryOrigin === 'deriver_agent' &&
+        !obs.sourceMessageIds?.length
+      ) {
+        throw new Error('deriver_agent conclusions require sourceMessageIds')
+      }
+      if (obs.entryOrigin === 'dreamer_agent' && !obs.sourceIds?.length) {
+        throw new Error('dreamer_agent conclusions require sourceIds')
+      }
+      if (
+        obs.entryOrigin === 'explicit_agent' &&
+        !(obs.sourceMessageIds?.length || obs.sourceToolCallId)
+      ) {
+        throw new Error(
+          'explicit_agent conclusions require sourceMessageIds or sourceToolCallId'
+        )
+      }
+      if (obs.entryOrigin.startsWith('operator_') && !obs.sourceToolCallId) {
+        throw new Error('operator conclusions require sourceToolCallId')
+      }
+
+      const sessionId =
         obs.sessionId === undefined
           ? null
           : typeof obs.sessionId === 'string'
             ? obs.sessionId
-            : obs.sessionId.id,
-      observer_id: this.observer,
-      observed_id: this.observed,
-    }))
+            : obs.sessionId.id
+      requestConclusions.push({
+        content: obs.content,
+        session_id: sessionId,
+        observer_id: this.observer,
+        observed_id: this.observed,
+        level: obs.level ?? 'explicit',
+        action: obs.action,
+        target_id: obs.targetId,
+        reason_for_entry: obs.reasonForEntry,
+        search_query: obs.searchQuery,
+        searched_conclusion_ids: obs.searchedConclusionIds,
+        source_message_ids: obs.sourceMessageIds ?? [],
+        source_tool_call_id: obs.sourceToolCallId,
+        entry_origin: obs.entryOrigin,
+        agent_trace_id: obs.agentTraceId,
+        agent_model: obs.agentModel,
+        times_derived: obs.timesDerived,
+        source_ids: obs.sourceIds,
+        premises: obs.premises,
+        sources: obs.sources,
+        pattern_type: obs.patternType,
+        confidence: obs.confidence,
+      })
+    }
 
     const response = await this._create({ conclusions: requestConclusions })
-
     return (response ?? []).map((item) => Conclusion.fromApiResponse(item))
   }
 

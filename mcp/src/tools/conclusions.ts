@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
 import { textResult, errorResult } from "../types.js";
@@ -112,9 +113,19 @@ export function register(server: McpServer, ctx: ToolContext) {
         target_peer_id: z
           .string()
           .describe("The peer the conclusions are about."),
-        conclusions: z
-          .array(z.string())
-          .describe("Conclusion content strings to create."),
+        conclusions: z.array(
+          z.object({
+            content: z.string(),
+            action: z.enum(["create", "enrich"]),
+            target_id: z.string().optional(),
+            reason_for_entry: z.string(),
+            search_query: z.string(),
+            searched_conclusion_ids: z.array(z.string()),
+            source_message_ids: z.array(z.number().int()).optional(),
+          }),
+        ).describe("Search-backed admission decisions. Search with query_conclusions before writing."),
+        agent_trace_id: z.string().describe("Agent run or trace identifier."),
+        agent_model: z.string().describe("Exact model identifier making the decision."),
         session_id: z
           .string()
           .optional()
@@ -123,13 +134,24 @@ export function register(server: McpServer, ctx: ToolContext) {
           ),
       },
     },
-    async ({ peer_id, target_peer_id, conclusions, session_id }) => {
+    async ({ peer_id, target_peer_id, conclusions, agent_trace_id, agent_model, session_id }) => {
       try {
         const peer = await ctx.honcho.peer(peer_id);
         const scope = peer.conclusionsOf(target_peer_id);
-        const params = conclusions.map((content) => ({
-          content,
+        const sourceToolCallId = `mcp-create-conclusion-${crypto.randomUUID()}`;
+        const params = conclusions.map((item) => ({
+          content: item.content,
           sessionId: session_id,
+          action: item.action,
+          targetId: item.target_id,
+          reasonForEntry: item.reason_for_entry,
+          searchQuery: item.search_query,
+          searchedConclusionIds: item.searched_conclusion_ids,
+          sourceMessageIds: item.source_message_ids,
+          sourceToolCallId: sourceToolCallId,
+          entryOrigin: "explicit_agent" as const,
+          agentTraceId: agent_trace_id,
+          agentModel: agent_model,
         }));
         await scope.create(params);
         return textResult(

@@ -247,6 +247,8 @@ If you update it, send the full deduplicated list and remove stale entries.
                 },
             ]
 
+            model_config = self.get_model_config()
+
             # Create tool executor with telemetry context
             tool_executor: Callable[
                 [str, dict[str, Any]], Any
@@ -260,10 +262,9 @@ If you update it, send the full deduplicated list and remove stale entries.
                 configuration=configuration,
                 run_id=run_id,
                 agent_type=self.name,
+                agent_model=model_config.model,
                 parent_category="dream",
             )
-
-            model_config = self.get_model_config()
 
             # Respect operator-configured max_output_tokens on the specialist's
             # ModelConfig (e.g. DREAM_DEDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS).
@@ -568,8 +569,9 @@ Once you understand what's there, create observations and clean up:
 ### Knowledge Updates (HIGH PRIORITY)
 When the same fact has different values at different times:
 - "meeting Tuesday" [old] → "meeting moved to Thursday" [new]
-- Create a deductive update observation
-- DELETE the outdated observation immediately
+- Search for the proposed update and nearby conclusions
+- Choose `enrich` with the outdated conclusion as `target_id`
+- The admission write retires the target atomically
 
 ### Logical Implications
 Extract implicit information:
@@ -583,14 +585,25 @@ When statements can't both be true (not just updates), flag them:
 
 ## CREATING OBSERVATIONS
 
-Use `create_observations_deductive`.
+Before every write:
+1. Search `search_memory` using the proposed conclusion as the query.
+2. Inspect every returned candidate.
+3. Choose `create` only when no candidate should be revised.
+4. Choose `enrich` when the new conclusion replaces or materially improves one candidate.
+5. Record the exact query, inspected candidate IDs, and a specific reason.
+
+Use `create_observations_deductive` only after completing those steps.
 
 ```json
 {{
   "observations": [{{
     "content": "The logical conclusion",
     "source_ids": ["id1", "id2"],
-    "premises": ["premise 1 text", "premise 2 text"]
+    "premises": ["premise 1 text", "premise 2 text"],
+    "action": "create",
+    "reason_for_entry": "Why this is a distinct, durable deduction",
+    "search_query": "The exact search query used",
+    "searched_conclusion_ids": []
   }}]
 }}
 ```
@@ -601,7 +614,7 @@ Use `create_observations_deductive`.
 2. Create observations based on what you ACTUALLY FIND, not what you expect
 3. Always include source_ids linking to the observations you're synthesizing
 4. Empty or missing source_ids will be rejected
-5. Delete outdated observations - don't leave duplicates
+5. Use `enrich`; do not separately delete its target
 6. Quality over quantity - fewer good deductions beat many weak ones"""
 
     def build_user_prompt(
@@ -712,7 +725,14 @@ Create inductive observations when you see patterns:
 
 ## CREATING OBSERVATIONS
 
-Use `create_observations_inductive`.
+Before every write:
+1. Search `search_memory` using the proposed pattern as the query.
+2. Inspect every returned candidate.
+3. Choose `create` only when no candidate should be revised.
+4. Choose `enrich` when the new conclusion replaces or materially improves one candidate.
+5. Record the exact query, inspected candidate IDs, and a specific reason.
+
+Use `create_observations_inductive` only after completing those steps.
 
 ```json
 {{
@@ -721,7 +741,11 @@ Use `create_observations_inductive`.
     "source_ids": ["id1", "id2", "id3"],
     "sources": ["evidence 1", "evidence 2"],
     "pattern_type": "tendency", // preference|behavior|personality|tendency|correlation
-    "confidence": "medium" // low (2 sources), medium (3-4), high (5+)
+    "confidence": "medium", // low (2 sources), medium (3-4), high (5+)
+    "action": "create",
+    "reason_for_entry": "Why this pattern is distinct and supported",
+    "search_query": "The exact search query used",
+    "searched_conclusion_ids": []
   }}]
 }}
 ```

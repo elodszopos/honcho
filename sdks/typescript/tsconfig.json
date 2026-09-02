@@ -12,9 +12,10 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "lib": [
-      "es6",
+      "ES2020",
       "dom"
-    ]
+    ],
+    "types": ["node"]
   },
   "include": [
     "src/**/*"

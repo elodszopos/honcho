@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -50,6 +50,7 @@ from .base import PeerBase, SessionBase
 from .conclusions import (
     _SCOPE_RESERVED,
     Conclusion,
+    ConclusionCreateParams,
     _reject_reserved_filter_keys,
 )
 from .http import routes
@@ -70,7 +71,6 @@ if TYPE_CHECKING:
     from .client import Honcho
     from .conclusions import ConclusionScope
 
-from .conclusions import ConclusionCreateParams
 from .peer import Peer
 from .session import Session
 
@@ -1565,32 +1565,33 @@ class ConclusionScopeAio:
 
     async def create(
         self,
-        conclusions: list[ConclusionCreateParams | dict[str, Any]],
+        conclusions: Sequence[ConclusionCreateParams | dict[str, Any]],
     ) -> list[Conclusion]:
-        """Create conclusions in this scope asynchronously."""
+        """Create or enrich conclusions through the public admission API."""
         await self._scope._honcho._ensure_workspace_async()
 
         def build_conclusion_payload(
             item: ConclusionCreateParams | dict[str, Any],
         ) -> dict[str, Any]:
-            """Build a single conclusion create payload."""
+            params = (
+                item
+                if isinstance(item, ConclusionCreateParams)
+                else ConclusionCreateParams.model_validate(item)
+            )
+            raw = params.model_dump(exclude_none=True)
             payload: dict[str, Any] = {
+                "content": raw["content"],
                 "observer_id": self._scope.observer,
                 "observed_id": self._scope.observed,
             }
-            if isinstance(item, ConclusionCreateParams):
-                payload["content"] = item.content
-                if item.session_id is not None:
-                    payload["session_id"] = item.session_id
-                return payload
-
-            payload["content"] = item["content"]
-            session_id = item.get("session_id")
+            session_id = raw.pop("session_id", None)
+            raw.pop("content")
             if session_id is not None:
                 payload["session_id"] = session_id
+            payload.update(raw)
             return payload
 
-        conclusion_params = [build_conclusion_payload(c) for c in conclusions]
+        conclusion_params = [build_conclusion_payload(item) for item in conclusions]
 
         data = await self._scope._honcho._async_http_client.post(
             routes.conclusions(self._scope.workspace_id),

@@ -871,10 +871,66 @@ async def delete_document_by_id(
     await db.commit()
 
 
+async def _validate_admission_references(
+    db: AsyncSession,
+    workspace_name: str,
+    observations: Sequence[schemas.ConclusionCreate],
+) -> None:
+    """Verify that every claimed search and source reference exists in scope."""
+    for obs in observations:
+        if obs.searched_conclusion_ids:
+            result = await db.execute(
+                select(models.Document.id).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == obs.observer_id,
+                    models.Document.observed == obs.observed_id,
+                    models.Document.id.in_(obs.searched_conclusion_ids),
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+            found = set(result.scalars().all())
+            if set(obs.searched_conclusion_ids) - found:
+                raise ValidationException(
+                    "searched_conclusion_ids contain missing, retired, or out-of-scope conclusions"
+                )
+
+        if obs.source_ids:
+            result = await db.execute(
+                select(models.Document.id).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == obs.observer_id,
+                    models.Document.observed == obs.observed_id,
+                    models.Document.id.in_(obs.source_ids),
+                )
+            )
+            found = set(result.scalars().all())
+            if set(obs.source_ids) - found:
+                raise ValidationException(
+                    "source_ids contain missing or out-of-scope conclusions"
+                )
+
+        if obs.source_message_ids:
+            conditions = [
+                models.Message.workspace_name == workspace_name,
+                models.Message.peer_name == obs.observed_id,
+                models.Message.id.in_(obs.source_message_ids),
+            ]
+            if obs.session_id is not None:
+                conditions.append(models.Message.session_name == obs.session_id)
+            result = await db.execute(select(models.Message.id).where(*conditions))
+            found = set(result.scalars().all())
+            if set(obs.source_message_ids) - found:
+                raise ValidationException(
+                    "source_message_ids contain missing, wrong-peer, or out-of-scope messages"
+                )
+
+
 async def create_observations(
     db: AsyncSession,
     observations: Sequence[schemas.ConclusionCreate],
     workspace_name: str,
+    *,
+    embeddings: Sequence[list[float]] | None = None,
 ) -> list[models.Document]:
     """
     Create multiple observations (documents) from user input.
@@ -923,12 +979,19 @@ async def create_observations(
             db, workspace_name, observer=observer, observed=observed
         )
 
-    # Generate embeddings in batch
-    contents = [obs.content for obs in observations]
-    try:
-        embeddings = await embedding_client.simple_batch_embed(contents)
-    except ValueError as e:
-        raise ValidationException(str(e)) from e
+    await _validate_admission_references(db, workspace_name, observations)
+
+    # Generate embeddings when the admission caller did not precompute them.
+    if embeddings is None:
+        contents = [obs.content for obs in observations]
+        try:
+            embeddings = await embedding_client.simple_batch_embed(contents)
+        except ValueError as e:
+            raise ValidationException(str(e)) from e
+    if len(embeddings) != len(observations):
+        raise ValidationException(
+            "Admission embedding count does not match observations"
+        )
 
     # Create document objects and track embeddings for vector store
     honcho_documents: list[models.Document] = []
@@ -944,16 +1007,71 @@ async def create_observations(
     )
 
     for obs, embedding in zip(observations, embeddings, strict=True):
+        previous_documents: list[models.Document] = []
+        if obs.action == "enrich" and obs.target_id:
+            previous_documents = await fetch_documents_by_ids(
+                db,
+                workspace_name,
+                obs.observer_id,
+                obs.observed_id,
+                [obs.target_id],
+            )
+            if not previous_documents:
+                raise ResourceNotFoundException(
+                    f"Enrichment target {obs.target_id} was not found in the conclusion collection"
+                )
+        previous = previous_documents[0] if previous_documents else None
+        previous_metadata = previous.internal_metadata if previous else {}
+        admission_history = list(previous_metadata.get("admission_history", []))
+        if previous:
+            admission_history.append(
+                {
+                    "content": previous.content,
+                    "admission": previous_metadata.get("admission"),
+                    "document_id": previous.id,
+                    "level": previous.level,
+                    "source_ids": previous.source_ids,
+                    "times_derived": previous.times_derived,
+                    "created_at": previous.created_at.isoformat(),
+                }
+            )
+        internal_metadata = {
+            "message_ids": obs.source_message_ids,
+            "premises": obs.premises or None,
+            "sources": obs.sources or None,
+            "pattern_type": obs.pattern_type,
+            "confidence": obs.confidence,
+            "admission": {
+                "entry_origin": obs.entry_origin,
+                "level": obs.level,
+                "action": obs.action,
+                "reason_for_entry": obs.reason_for_entry,
+                "searched_conclusion_ids": obs.searched_conclusion_ids,
+                "search_query": obs.search_query,
+                "source_message_ids": obs.source_message_ids,
+                "source_tool_call_id": obs.source_tool_call_id,
+                "source_ids": obs.source_ids,
+                "premises": obs.premises,
+                "sources": obs.sources,
+                "pattern_type": obs.pattern_type,
+                "confidence": obs.confidence,
+                "agent_trace_id": obs.agent_trace_id,
+                "agent_model": obs.agent_model,
+                "supersedes_id": obs.target_id,
+            },
+            "admission_history": admission_history,
+        }
+        source_ids = obs.source_ids or None
         if store_embeddings_in_postgres:
             doc = models.Document(
                 workspace_name=workspace_name,
                 observer=obs.observer_id,
                 observed=obs.observed_id,
                 content=obs.content,
-                level="explicit",  # Manually created observations are always explicit
+                level=obs.level,
                 times_derived=obs.times_derived or 1,
-                source_ids=obs.source_ids,
-                internal_metadata={},  # No message_ids since not derived from messages
+                source_ids=source_ids,
+                internal_metadata=internal_metadata,
                 session_name=obs.session_id,
                 embedding=embedding,
             )
@@ -963,10 +1081,10 @@ async def create_observations(
                 observer=obs.observer_id,
                 observed=obs.observed_id,
                 content=obs.content,
-                level="explicit",  # Manually created observations are always explicit
+                level=obs.level,
                 times_derived=obs.times_derived or 1,
-                source_ids=obs.source_ids,
-                internal_metadata={},  # No message_ids since not derived from messages
+                source_ids=source_ids,
+                internal_metadata=internal_metadata,
                 session_name=obs.session_id,
             )
         doc.sync_state = "pending"
@@ -980,6 +1098,36 @@ async def create_observations(
 
     try:
         db.add_all(honcho_documents)
+        await db.flush()
+
+        # Create replacement revisions and retire their predecessors in the same
+        # database transaction. Vector cleanup remains reconciler-owned.
+        grouped_targets: dict[tuple[str, str], list[str]] = {}
+        for obs in observations:
+            if obs.target_id:
+                grouped_targets.setdefault(
+                    (obs.observer_id, obs.observed_id), []
+                ).append(obs.target_id)
+        for (observer, observed), scoped_target_ids in grouped_targets.items():
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(models.Document)
+                    .where(
+                        models.Document.id.in_(scoped_target_ids),
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                        models.Document.deleted_at.is_(None),
+                    )
+                    .values(deleted_at=func.now())
+                ),
+            )
+            if result.rowcount != len(scoped_target_ids):
+                raise ValidationException(
+                    "Enrichment target changed during admission; search again before writing"
+                )
+
         await db.commit()
         # Refresh all documents to get generated IDs and timestamps
         for doc in honcho_documents:
@@ -1082,6 +1230,9 @@ async def create_observations(
         raise ValidationException(
             "Failed to create observations due to integrity constraint violation"
         ) from e
+    except Exception:
+        await db.rollback()
+        raise
 
     logger.debug(
         "Created %d observations in workspace %s",

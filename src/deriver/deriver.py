@@ -1,6 +1,8 @@
+import asyncio
+import json
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 from nanoid import generate as generate_nanoid
 
@@ -24,7 +26,12 @@ from src.telemetry.prometheus.metrics import (
 from src.telemetry.sentry import with_sentry_transaction
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
-from src.utils.representation import PromptRepresentation, Representation
+from src.utils.representation import (
+    AdmissionRepresentation,
+    ExplicitObservation,
+    ExtractedRepresentation,
+    Representation,
+)
 from src.utils.tokens import track_deriver_input_tokens
 
 from .prompts import estimate_deriver_prompt_tokens, minimal_deriver_prompt
@@ -40,7 +47,12 @@ def _model_config_log_fields(config: ConfiguredModelSettings) -> dict[str, Any]:
     """Return non-secret model-routing fields for operational logs."""
     overrides = getattr(config, "overrides", None)
     fallback = getattr(config, "fallback", None)
-    provider_params = getattr(overrides, "provider_params", None) or {}
+    raw_provider_params = getattr(overrides, "provider_params", None)
+    provider_params = (
+        cast(dict[str, Any], raw_provider_params)
+        if isinstance(raw_provider_params, dict)
+        else {}
+    )
     return {
         "transport": config.transport,
         "model": config.model,
@@ -153,7 +165,8 @@ async def process_representation_tasks_batch(
 
     # Format messages with timestamps
     formatted_messages = "\n".join(
-        format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
+        f"[message_id:{msg.id}]\n"
+        + format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
         for msg in messages
     )
 
@@ -191,7 +204,7 @@ async def process_representation_tasks_batch(
     max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
     model_config = base_model_config
 
-    # Single LLM call
+    # First LLM call: extract durable-memory candidates without writing them.
     trace_id = generate_nanoid()
     llm_start = time.perf_counter()
     logger.info(
@@ -215,7 +228,7 @@ async def process_representation_tasks_batch(
             model_config=model_config,
             prompt=prompt,
             max_tokens=max_tokens,
-            response_model=PromptRepresentation,
+            response_model=ExtractedRepresentation,
             json_mode=True,
             max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
             enable_retry=True,
@@ -257,63 +270,209 @@ async def process_representation_tasks_batch(
         type(response.content).__name__,
     )
 
-    accumulate_metric(
-        f"minimal_deriver_{latest_message.id}_{observed}",
-        "llm_call_duration",
-        llm_duration,
-        "ms",
-    )
-
-    # Prometheus metrics
-    if settings.METRICS.ENABLED:
-        prometheus_metrics.record_deriver_tokens(
-            count=response.output_tokens,
-            task_type=DeriverTaskTypes.INGESTION.value,
-            token_type=TokenTypes.OUTPUT.value,
-            component=DeriverComponents.OUTPUT_TOTAL.value,
-        )
-
     message_ids = [m.id for m in messages if m.peer_name == observed]
-
-    # Convert to Representation and save
-    observations = Representation.from_prompt_representation(
-        response.content,
-        message_ids,
-        latest_message.session_name,
-        latest_message.created_at,
-    )
-
+    eligible_message_ids = set(message_ids)
+    observations = Representation()
     successful_observer_count = 0
-    if observations.is_empty() or not message_ids:
+    admission_response = None
+    admission_llm_duration = 0.0
+
+    if not response.content.explicit or not message_ids:
         logger.warning(
-            "Deriver generated zero observations for messages %s:%s in %s/%s!",
+            "Deriver generated zero admission candidates for messages %s:%s in %s/%s!",
             earliest_message.id,
             latest_message.id,
             latest_message.workspace_name,
             latest_message.session_name,
         )
     else:
-        # Save to all observer collections
-        for observer in observers:
-            representation_manager = RepresentationManager(
+        managers = {
+            observer: RepresentationManager(
                 workspace_name=latest_message.workspace_name,
                 observer=observer,
                 observed=observed,
             )
+            for observer in observers
+        }
+        case_inputs = [
+            (observer, candidate)
+            for observer in observers
+            for candidate in response.content.explicit
+        ]
+        candidate_representations = await asyncio.gather(
+            *(
+                managers[observer].get_working_representation(
+                    include_semantic_query=candidate.content,
+                    semantic_search_top_k=10,
+                    semantic_search_max_distance=None,
+                    include_most_derived=False,
+                    max_observations=10,
+                    parent_category="representation_admission",
+                )
+                for observer, candidate in case_inputs
+            )
+        )
 
-            try:
-                await representation_manager.save_representation(
-                    observations,
-                    message_ids,
-                    latest_message.session_name,
-                    latest_message.created_at,
-                    message_level_configuration,
+        admission_cases: list[dict[str, Any]] = []
+        case_context: dict[int, tuple[str, Any, list[str]]] = {}
+        for case_id, ((observer, candidate), candidate_representation) in enumerate(
+            zip(case_inputs, candidate_representations, strict=True)
+        ):
+            candidate_ids = [
+                item.id
+                for item in (
+                    candidate_representation.explicit
+                    + candidate_representation.deductive
+                    + candidate_representation.inductive
+                    + candidate_representation.contradiction
                 )
+                if item.id
+            ]
+            case_context[case_id] = (observer, candidate, candidate_ids)
+            admission_cases.append(
+                {
+                    "admission_case_id": case_id,
+                    "observer_id": observer,
+                    "candidate_observation": candidate.content,
+                    "searched_conclusion_ids": candidate_ids,
+                }
+            )
+
+        admission_prompt = minimal_deriver_prompt(
+            peer_id=observed,
+            messages=formatted_messages,
+            existing_conclusions=json.dumps(
+                [
+                    {
+                        "admission_case_id": case_id,
+                        "conclusions": candidate_representation.format_as_markdown(
+                            include_ids=True
+                        ),
+                    }
+                    for case_id, candidate_representation in enumerate(
+                        candidate_representations
+                    )
+                ],
+                indent=2,
+            ),
+            candidate_observation=json.dumps(admission_cases, indent=2),
+            custom_instructions=custom_instructions,
+        )
+        admission_trace_id = generate_nanoid()
+        admission_llm_start = time.perf_counter()
+        try:
+            admission_response = await honcho_llm_call(
+                model_config=model_config,
+                prompt=admission_prompt,
+                max_tokens=max_tokens,
+                response_model=AdmissionRepresentation,
+                json_mode=True,
+                max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
+                enable_retry=True,
+                retry_attempts=3,
+                trace_name="conclusion_admission",
+                telemetry=LLMTelemetryContext(
+                    workspace_name=latest_message.workspace_name,
+                    call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
+                    parent_category="representation_admission",
+                    observed=observed,
+                    track_name="Conclusion Admission",
+                    trace_id=admission_trace_id,
+                    span_id=admission_trace_id,
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "deriver.batch admission_failed: trace_id=%s workspace=%s session=%s observed=%s elapsed_ms=%.1f",
+                admission_trace_id,
+                latest_message.workspace_name,
+                latest_message.session_name,
+                observed,
+                (time.perf_counter() - admission_llm_start) * 1000,
+            )
+            raise
+        admission_llm_duration = (time.perf_counter() - admission_llm_start) * 1000
+
+        admitted_by_observer: dict[str, Representation] = {}
+        decided_case_ids: set[int] = set()
+        for decision in admission_response.content.explicit:
+            if decision.admission_case_id in decided_case_ids:
+                raise ValueError(
+                    f"Admission agent returned duplicate case {decision.admission_case_id}"
+                )
+            decided_case_ids.add(decision.admission_case_id)
+            if decision.admission_case_id not in case_context:
+                raise ValueError(
+                    f"Admission agent returned unknown case {decision.admission_case_id}"
+                )
+            observer, candidate, candidate_ids = case_context[
+                decision.admission_case_id
+            ]
+            if len(set(decision.source_message_ids)) != len(
+                decision.source_message_ids
+            ) or not set(decision.source_message_ids).issubset(eligible_message_ids):
+                raise ValueError(
+                    "Admission agent cited duplicate, non-prompt, or wrong-peer message IDs"
+                )
+            if decision.action == "enrich" and decision.target_id not in candidate_ids:
+                raise ValueError(
+                    f"Admission agent targeted unsearched conclusion {decision.target_id!r}"
+                )
+            admitted_by_observer.setdefault(observer, Representation()).explicit.append(
+                ExplicitObservation(
+                    content=decision.content,
+                    action=decision.action,
+                    target_id=decision.target_id,
+                    reason_for_entry=decision.reason_for_entry,
+                    created_at=latest_message.created_at,
+                    message_ids=decision.source_message_ids,
+                    session_name=latest_message.session_name,
+                    searched_conclusion_ids=candidate_ids,
+                    search_query=candidate.content,
+                    trace_id=admission_trace_id,
+                    model=model_config.model,
+                )
+            )
+
+        # Persist each observer's complete candidate set in one transactional call.
+        for observer, admitted in admitted_by_observer.items():
+            saved = await managers[observer].save_representation(
+                admitted,
+                message_ids,
+                latest_message.session_name,
+                latest_message.created_at,
+                message_level_configuration,
+            )
+            if saved:
                 successful_observer_count += 1
-            except Exception as e:
-                logger.error(
-                    "Failed to save representation for observer %s: %s", observer, e
-                )
+                observations.explicit.extend(admitted.explicit)
+
+    total_llm_duration = llm_duration + admission_llm_duration
+    total_input_tokens = response.input_tokens + (
+        admission_response.input_tokens if admission_response is not None else 0
+    )
+    total_output_tokens = response.output_tokens + (
+        admission_response.output_tokens if admission_response is not None else 0
+    )
+    hit_input_token_cap = response.hit_input_token_cap or (
+        admission_response.hit_input_token_cap
+        if admission_response is not None
+        else False
+    )
+    accumulate_metric(
+        f"minimal_deriver_{latest_message.id}_{observed}",
+        "llm_call_duration",
+        total_llm_duration,
+        "ms",
+    )
+
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_deriver_tokens(
+            count=total_output_tokens,
+            task_type=DeriverTaskTypes.INGESTION.value,
+            token_type=TokenTypes.OUTPUT.value,
+            component=DeriverComponents.OUTPUT_TOTAL.value,
+        )
 
     # Log metrics
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -372,7 +531,7 @@ async def process_representation_tasks_batch(
         prompt_message_count,
         extra_context_message_count,
         overall_duration,
-        llm_duration,
+        total_llm_duration,
     )
 
     # Data-quality invariants. Best-effort — telemetry never bleeds into the
@@ -407,11 +566,11 @@ async def process_representation_tasks_batch(
             message_count=len(messages),
             explicit_conclusion_count=len(observations.explicit),
             context_preparation_ms=context_prep_duration,
-            llm_call_ms=llm_duration,
+            llm_call_ms=total_llm_duration,
             total_duration_ms=overall_duration,
             input_tokens=messages_tokens,
-            total_input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
+            total_input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
             # additive fields
             queued_message_count=queued_message_count,
             prompt_message_count=prompt_message_count,
@@ -423,7 +582,7 @@ async def process_representation_tasks_batch(
             max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
             was_flush_enabled=was_flush_enabled,
             hit_batch_token_cap=hit_batch_token_cap,
-            hit_input_token_cap=response.hit_input_token_cap,
+            hit_input_token_cap=hit_input_token_cap,
             observer_count=successful_observer_count,
         )
     )

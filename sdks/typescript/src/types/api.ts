@@ -259,6 +259,8 @@ export interface ConclusionResponse {
   observed_id: string
   session_id: string | null
   level: ConclusionLevel
+  admission: Record<string, unknown>
+  admission_history: Array<Record<string, unknown>>
   created_at: string
 }
 
@@ -267,6 +269,23 @@ export interface ConclusionCreateParams {
   observer_id: string
   observed_id: string
   session_id: string | null
+  level?: ConclusionLevel
+  action?: 'create' | 'enrich'
+  target_id?: string
+  reason_for_entry?: string
+  search_query?: string
+  searched_conclusion_ids?: string[]
+  source_message_ids?: number[]
+  source_tool_call_id?: string
+  entry_origin?: string
+  agent_trace_id?: string
+  agent_model?: string
+  times_derived?: number
+  source_ids?: string[]
+  premises?: string[]
+  sources?: string[]
+  pattern_type?: string
+  confidence?: string
 }
 
 export interface ConclusionBatchCreateParams {

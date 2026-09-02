@@ -10,6 +10,25 @@ from sdks.python.src.honcho.conclusions import (
 )
 
 
+def _operator_conclusion(
+    content: str,
+    session_id: str | None = None,
+) -> ConclusionCreateParams:
+    """Build a complete operator admission decision for SDK behavior tests."""
+    return ConclusionCreateParams(
+        content=content,
+        session_id=session_id,
+        action="create",
+        reason_for_entry="Operator explicitly requested durable storage.",
+        search_query=content,
+        searched_conclusion_ids=[],
+        source_tool_call_id="sdk-test-operator",
+        entry_origin="operator_sdk",
+        agent_trace_id="sdk-test-trace",
+        agent_model="sdk-test-model",
+    )
+
+
 @pytest.mark.asyncio
 async def test_observation_create_single(
     client_fixture: tuple[Honcho, str],
@@ -39,10 +58,7 @@ async def test_observation_create_single(
         # Create a single observation
         created = await obs_scope.aio.create(
             [
-                ConclusionCreateParams(
-                    content="User prefers dark mode",
-                    session_id=session.id,
-                )
+                _operator_conclusion("User prefers dark mode", session.id)
             ]
         )
 
@@ -53,6 +69,9 @@ async def test_observation_create_single(
         assert created[0].observed_id == target.id
         assert created[0].session_id == session.id
         assert created[0].id  # Has an ID
+        assert created[0].admission["entry_origin"] == "operator_sdk"
+        assert created[0].admission["search_query"] == "User prefers dark mode"
+        assert created[0].admission_history == []
     else:
         observer = honcho_client.peer(id="test-obs-create-single-observer")
         target = honcho_client.peer(id="test-obs-create-single-target")
@@ -73,10 +92,7 @@ async def test_observation_create_single(
         # Create a single observation
         created = obs_scope.create(
             [
-                ConclusionCreateParams(
-                    content="User prefers dark mode",
-                    session_id=session.id,
-                )
+                _operator_conclusion("User prefers dark mode", session.id)
             ]
         )
 
@@ -87,6 +103,9 @@ async def test_observation_create_single(
         assert created[0].observed_id == target.id
         assert created[0].session_id == session.id
         assert created[0].id  # Has an ID
+        assert created[0].admission["entry_origin"] == "operator_sdk"
+        assert created[0].admission["search_query"] == "User prefers dark mode"
+        assert created[0].admission_history == []
 
 
 @pytest.mark.asyncio
@@ -117,18 +136,9 @@ async def test_observation_create_batch(
         # Create multiple observations
         created = await obs_scope.aio.create(
             [
-                ConclusionCreateParams(
-                    content="User prefers dark mode",
-                    session_id=session.id,
-                ),
-                ConclusionCreateParams(
-                    content="User works late at night",
-                    session_id=session.id,
-                ),
-                ConclusionCreateParams(
-                    content="User enjoys programming",
-                    session_id=session.id,
-                ),
+                _operator_conclusion("User prefers dark mode", session.id),
+                _operator_conclusion("User works late at night", session.id),
+                _operator_conclusion("User enjoys programming", session.id),
             ]
         )
 
@@ -162,9 +172,9 @@ async def test_observation_create_batch(
         # Create multiple observations
         created = obs_scope.create(
             [
-                {"content": "User prefers dark mode", "session_id": session.id},
-                {"content": "User works late at night", "session_id": session.id},
-                {"content": "User enjoys programming", "session_id": session.id},
+                _operator_conclusion("User prefers dark mode", session.id),
+                _operator_conclusion("User works late at night", session.id),
+                _operator_conclusion("User enjoys programming", session.id),
             ]
         )
 
@@ -209,10 +219,7 @@ async def test_observation_create_then_list(
         # Create observations
         created = await obs_scope.aio.create(
             [
-                {
-                    "content": "Unique observation for list test",
-                    "session_id": session.id,
-                },
+                _operator_conclusion("Unique observation for list test", session.id),
             ]
         )
 
@@ -241,10 +248,7 @@ async def test_observation_create_then_list(
         # Create observations
         created = obs_scope.create(
             [
-                {
-                    "content": "Unique observation for list test",
-                    "session_id": session.id,
-                },
+                _operator_conclusion("Unique observation for list test", session.id),
             ]
         )
 
@@ -284,10 +288,10 @@ async def test_observation_create_then_query(
         # Create observation with specific content
         await obs_scope.aio.create(
             [
-                {
-                    "content": "User loves Italian cuisine especially pasta and pizza",
-                    "session_id": session.id,
-                },
+                _operator_conclusion(
+                    "User loves Italian cuisine especially pasta and pizza",
+                    session.id,
+                ),
             ]
         )
 
@@ -317,10 +321,10 @@ async def test_observation_create_then_query(
         # Create observation with specific content
         obs_scope.create(
             [
-                {
-                    "content": "User loves Italian cuisine especially pasta and pizza",
-                    "session_id": session.id,
-                },
+                _operator_conclusion(
+                    "User loves Italian cuisine especially pasta and pizza",
+                    session.id,
+                ),
             ]
         )
 
@@ -360,7 +364,7 @@ async def test_observation_create_then_delete(
 
         # Create observations
         created = await obs_scope.aio.create(
-            [{"content": "Observation to be deleted", "session_id": session.id}]
+            [_operator_conclusion("Observation to be deleted", session.id)]
         )
 
         observation_id = created[0].id
@@ -390,7 +394,7 @@ async def test_observation_create_then_delete(
 
         # Create observations
         created = obs_scope.create(
-            [{"content": "Observation to be deleted", "session_id": session.id}]
+            [_operator_conclusion("Observation to be deleted", session.id)]
         )
 
         observation_id = created[0].id
@@ -428,7 +432,7 @@ async def test_self_observation_create(
 
         # Create a self-observation
         created = await obs_scope.aio.create(
-            [{"content": "I prefer morning workouts", "session_id": session.id}]
+            [_operator_conclusion("I prefer morning workouts", session.id)]
         )
 
         assert len(created) == 1
@@ -449,7 +453,7 @@ async def test_self_observation_create(
 
         # Create a self-observation
         created = obs_scope.create(
-            [{"content": "I prefer morning workouts", "session_id": session.id}]
+            [_operator_conclusion("I prefer morning workouts", session.id)]
         )
 
         assert len(created) == 1
@@ -491,10 +495,10 @@ async def test_observation_create_with_session_filter(
 
         # Create observations in different sessions
         await obs_scope.aio.create(
-            [{"content": "Session 1 observation", "session_id": session1.id}]
+            [_operator_conclusion("Session 1 observation", session1.id)]
         )
         await obs_scope.aio.create(
-            [{"content": "Session 2 observation", "session_id": session2.id}]
+            [_operator_conclusion("Session 2 observation", session2.id)]
         )
 
         # List filtered by session1
@@ -533,10 +537,10 @@ async def test_observation_create_with_session_filter(
 
         # Create observations in different sessions
         obs_scope.create(
-            [{"content": "Session 1 observation", "session_id": session1.id}]
+            [_operator_conclusion("Session 1 observation", session1.id)]
         )
         obs_scope.create(
-            [{"content": "Session 2 observation", "session_id": session2.id}]
+            [_operator_conclusion("Session 2 observation", session2.id)]
         )
 
         # List filtered by session1
@@ -580,7 +584,7 @@ async def test_observation_scope_via_peer_string(
 
         # Create observation
         created = await obs_scope.aio.create(
-            [{"content": "Created via string target", "session_id": session.id}]
+            [_operator_conclusion("Created via string target", session.id)]
         )
 
         assert len(created) == 1
@@ -604,7 +608,7 @@ async def test_observation_scope_via_peer_string(
 
         # Create observation
         created = obs_scope.create(
-            [{"content": "Created via string target", "session_id": session.id}]
+            [_operator_conclusion("Created via string target", session.id)]
         )
 
         assert len(created) == 1
@@ -639,10 +643,7 @@ async def test_observation_create_without_session_id(
         # Create observation WITHOUT session_id
         created = await obs_scope.aio.create(
             [
-                ConclusionCreateParams(
-                    content="Global observation without session",
-                    # No session_id - this is the key test
-                )
+                _operator_conclusion("Global observation without session")
             ]
         )
 
@@ -653,6 +654,9 @@ async def test_observation_create_without_session_id(
         assert created[0].observed_id == target.id
         assert created[0].session_id is None  # Should be None
         assert created[0].id  # Has an ID
+        assert created[0].admission["entry_origin"] == "operator_sdk"
+        assert created[0].admission["search_query"] == created[0].content
+        assert created[0].admission_history == []
     else:
         observer = honcho_client.peer(id="test-obs-no-session-observer")
         target = honcho_client.peer(id="test-obs-no-session-target")
@@ -672,10 +676,7 @@ async def test_observation_create_without_session_id(
         # Create observation WITHOUT session_id
         created = obs_scope.create(
             [
-                ConclusionCreateParams(
-                    content="Global observation without session",
-                    # No session_id - this is the key test
-                )
+                _operator_conclusion("Global observation without session")
             ]
         )
 
@@ -686,6 +687,9 @@ async def test_observation_create_without_session_id(
         assert created[0].observed_id == target.id
         assert created[0].session_id is None  # Should be None
         assert created[0].id  # Has an ID
+        assert created[0].admission["entry_origin"] == "operator_sdk"
+        assert created[0].admission["search_query"] == created[0].content
+        assert created[0].admission_history == []
 
 
 @pytest.mark.asyncio
@@ -716,8 +720,8 @@ async def test_observation_create_mixed_session_and_sessionless(
         # Create mixed batch: one with session, one without
         created = await obs_scope.aio.create(
             [
-                {"content": "Session-scoped observation", "session_id": session.id},
-                {"content": "Global observation without session"},  # No session_id
+                _operator_conclusion("Session-scoped observation", session.id),
+                _operator_conclusion("Global observation without session"),
             ]
         )
 
@@ -752,8 +756,8 @@ async def test_observation_create_mixed_session_and_sessionless(
         # Create mixed batch: one with session, one without
         created = obs_scope.create(
             [
-                {"content": "Session-scoped observation", "session_id": session.id},
-                {"content": "Global observation without session"},  # No session_id
+                _operator_conclusion("Session-scoped observation", session.id),
+                _operator_conclusion("Global observation without session"),
             ]
         )
 

@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -54,10 +54,38 @@ class ObservationMetadata(BaseModel):
     created_at: datetime
     message_ids: list[int]
     session_name: str | None = None
+    searched_conclusion_ids: list[str] = Field(default_factory=list)
+    search_query: str = ""
+    trace_id: str = ""
+    model: str = ""
 
 
 class ExplicitObservationBase(BaseModel):
     content: str = Field(description="The explicit observation")
+    action: Literal["create", "enrich"] = Field(
+        description=(
+            "Create only when no searched conclusion expresses the same memory; "
+            "otherwise enrich one searched conclusion through a replacement revision."
+        )
+    )
+    target_id: str | None = Field(
+        default=None,
+        description="Required for enrich and forbidden for create; must identify a searched conclusion.",
+    )
+    reason_for_entry: str = Field(
+        min_length=1,
+        description="Specific justification for why this memory passes admission and is worth retaining.",
+    )
+
+    @field_validator("target_id", mode="after")
+    @classmethod
+    def validate_target_id(cls, target_id: str | None, info: Any) -> str | None:
+        action = info.data.get("action")
+        if action == "enrich" and not target_id:
+            raise ValueError("target_id is required when action is enrich")
+        if action == "create" and target_id is not None:
+            raise ValueError("target_id is forbidden when action is create")
+        return target_id
 
 
 class DeductiveObservationBase(BaseModel):
@@ -108,27 +136,55 @@ class ContradictionObservationBase(BaseModel):
     content: str = Field(description="Description of the contradiction")
 
 
-class PromptRepresentation(BaseModel):
-    """
-    The representation format that is used when getting structured output from an LLM.
-    """
+class AdmissionDecision(ExplicitObservationBase):
+    """One admission decision tied to a searched candidate and exact message evidence."""
 
-    explicit: list[ExplicitObservationBase] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
-        default_factory=list,
+    admission_case_id: int = Field(
+        ge=0,
+        description="The admission case identifier supplied in the prompt.",
     )
+    source_message_ids: list[int] = Field(
+        min_length=1,
+        description="Exact database message IDs from the prompt that support this conclusion.",
+    )
+
+
+class AdmissionRepresentation(BaseModel):
+    """Batched admission decisions returned by the admission LLM call."""
+
+    explicit: list[AdmissionDecision] = Field(default_factory=list)
 
     @field_validator("explicit", mode="before")
     @classmethod
-    def convert_none_to_empty_list(cls, v: Any) -> Any:
-        """Convert None to empty list - handles LLMs returning null instead of []."""
-        if v is None:
-            return []
-        return v
+    def convert_none_to_empty_list(cls, value: Any) -> Any:
+        return [] if value is None else value
+
+
+class ExtractedObservation(BaseModel):
+    """A durable-memory candidate that has not yet been admitted."""
+
+    content: str = Field(description="The candidate observation")
+
+
+class ExtractedRepresentation(BaseModel):
+    """Candidate observations produced before collection search and admission."""
+
+    explicit: list[ExtractedObservation] = Field(default_factory=list)
+
+    @field_validator("explicit", mode="before")
+    @classmethod
+    def convert_none_to_empty_list(cls, value: Any) -> Any:
+        return [] if value is None else value
 
 
 class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
-    """Explicit observation with content and metadata."""
+    """Explicit observation with content, admission decision, and provenance metadata."""
+
+    action: Literal["create", "enrich"] = "create"
+    target_id: str | None = None
+    reason_for_entry: str = (
+        "Legacy conclusion: no admission justification was recorded."
+    )
 
     def __str__(self) -> str:
         return f"[{_strip_microseconds_and_timezone(self.created_at)}] {self.content}"
@@ -653,30 +709,6 @@ class Representation(BaseModel):
                 if doc.level == "contradiction"
             ],
         )
-
-    @classmethod
-    def from_prompt_representation(
-        cls,
-        prompt_representation: "PromptRepresentation",
-        message_ids: list[int],
-        session_name: str,
-        created_at: datetime,
-    ) -> "Representation":
-        """Convert PromptRepresentation to Representation."""
-        return cls(
-            explicit=[
-                ExplicitObservation(
-                    content=e.content,
-                    created_at=created_at,
-                    message_ids=message_ids,
-                    session_name=session_name,
-                )
-                for e in prompt_representation.explicit
-            ],
-            deductive=[],
-            inductive=[],
-        )
-
 
 def _safe_datetime_from_metadata(
     internal_metadata: dict[str, Any], fallback_datetime: datetime

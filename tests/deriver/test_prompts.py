@@ -30,6 +30,21 @@ def test_minimal_deriver_prompt_omits_custom_instructions_when_absent() -> None:
     assert "CUSTOM INSTRUCTIONS:" not in prompt
 
 
+def test_minimal_deriver_prompt_separates_source_messages_from_admission_cases() -> None:
+    prompt = minimal_deriver_prompt(
+        peer_id="alice",
+        messages="alice: I prefer tea without sugar",
+        candidate_observation="Alice prefers unsweetened tea.",
+        existing_conclusions="candidate-1: Alice likes tea.",
+    )
+
+    assert "Messages to analyze:" in prompt
+    assert "alice: I prefer tea without sugar" in prompt
+    assert "ADMISSION CASES UNDER REVIEW:" in prompt
+    assert "Alice prefers unsweetened tea." in prompt
+    assert "candidate-1: Alice likes tea." in prompt
+
+
 def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> None:
     base_tokens = estimate_minimal_deriver_prompt_tokens()
     custom_tokens = estimate_deriver_prompt_tokens(

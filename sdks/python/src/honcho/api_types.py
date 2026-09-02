@@ -419,11 +419,13 @@ class ConclusionResponse(BaseModel):
     observed_id: str
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
+    admission: dict[str, Any] = Field(default_factory=dict)
+    admission_history: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime.datetime
 
 
 class ConclusionCreateParams(BaseModel):
-    """Parameters for creating a conclusion."""
+    """Parameters for creating or enriching a conclusion."""
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
@@ -431,6 +433,23 @@ class ConclusionCreateParams(BaseModel):
     observer_id: str
     observed_id: str
     session_id: str | None = None
+    level: ConclusionLevel = "explicit"
+    action: Literal["create", "enrich"] | None = None
+    target_id: str | None = None
+    reason_for_entry: str | None = None
+    search_query: str | None = None
+    searched_conclusion_ids: list[str] | None = None
+    source_message_ids: list[int] | None = None
+    source_tool_call_id: str | None = None
+    entry_origin: str | None = None
+    agent_trace_id: str | None = None
+    agent_model: str | None = None
+    times_derived: int | None = None
+    source_ids: list[str] | None = None
+    premises: list[str] | None = None
+    sources: list[str] | None = None
+    pattern_type: str | None = None
+    confidence: str | None = None
 
 
 class ConclusionBatchCreateParams(BaseModel):

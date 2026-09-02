@@ -21,13 +21,13 @@ from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, ValidationError
 
 from src.llm import CLIENTS, HonchoLLMCallResponse, honcho_llm_call_inner
-from src.utils.representation import PromptRepresentation
+from src.utils.representation import ExtractedRepresentation
 
 # --- Test models ---
 
 
 class SimpleModel(BaseModel):
-    """Non-PromptRepresentation model for testing re-raise behavior."""
+    """Non-ExtractedRepresentation model for testing re-raise behavior."""
 
     items: list[str]
 
@@ -36,8 +36,16 @@ class SimpleModel(BaseModel):
 
 VALID_REPR_JSON = {
     "explicit": [
-        {"content": "hermes is 25 years old"},
-        {"content": "hermes has a dog"},
+        {
+            "content": "hermes is 25 years old",
+            "action": "create",
+            "reason_for_entry": "Durable identity fact absent from searched candidates.",
+        },
+        {
+            "content": "hermes has a dog",
+            "action": "create",
+            "reason_for_entry": "Durable relationship fact absent from searched candidates.",
+        },
     ]
 }
 
@@ -129,8 +137,8 @@ def _make_gemini_mock(
 class TestOpenAILengthFinishReasonRepair:
     """Tests that LengthFinishReasonError is caught and truncated JSON is repaired."""
 
-    async def test_truncated_prompt_representation_repaired_openai(self) -> None:
-        """Truncated but repairable PromptRepresentation JSON should be repaired (openai)."""
+    async def test_truncated_extracted_representation_repaired_openai(self) -> None:
+        """Truncated but repairable ExtractedRepresentation JSON should be repaired (openai)."""
         truncated_json = json.dumps(VALID_REPR_JSON)[:-2]
 
         mock_client = AsyncMock(spec=AsyncOpenAI)
@@ -142,20 +150,20 @@ class TestOpenAILengthFinishReasonRepair:
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
         assert isinstance(response, HonchoLLMCallResponse)
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert len(response.content.explicit) >= 1
         assert response.finish_reasons == ["length"]
         assert response.output_tokens == 2000
 
-    async def test_truncated_prompt_representation_repaired_openai_with_custom_base(
+    async def test_truncated_extracted_representation_repaired_openai_with_custom_base(
         self,
     ) -> None:
-        """Truncated but repairable PromptRepresentation JSON should be repaired."""
+        """Truncated but repairable ExtractedRepresentation JSON should be repaired."""
         truncated_json = json.dumps(VALID_REPR_JSON)[:-2]
 
         mock_client = AsyncMock(spec=AsyncOpenAI)
@@ -167,17 +175,17 @@ class TestOpenAILengthFinishReasonRepair:
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
         assert isinstance(response, HonchoLLMCallResponse)
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert len(response.content.explicit) >= 1
         assert response.finish_reasons == ["length"]
 
     async def test_completely_broken_json_falls_back_to_empty(self) -> None:
-        """Completely unrepairable JSON should fall back to empty PromptRepresentation."""
+        """Completely unrepairable JSON should fall back to empty ExtractedRepresentation."""
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error(
             "this is not json at all just random text"
@@ -189,16 +197,16 @@ class TestOpenAILengthFinishReasonRepair:
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert response.content.explicit == []
         assert response.finish_reasons == ["length"]
 
     async def test_empty_content_falls_back_to_empty(self) -> None:
-        """Empty/null content should fall back to empty PromptRepresentation."""
+        """Empty/null content should fall back to empty ExtractedRepresentation."""
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error("")
 
@@ -208,15 +216,15 @@ class TestOpenAILengthFinishReasonRepair:
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert response.content.explicit == []
 
-    async def test_non_prompt_representation_reraises_on_unfixable(self) -> None:
-        """Non-PromptRepresentation with unrepairable JSON should raise ValidationError."""
+    async def test_non_extracted_representation_reraises_on_unfixable(self) -> None:
+        """Non-ExtractedRepresentation with unrepairable JSON should raise ValidationError."""
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error("not json")
 
@@ -246,7 +254,7 @@ class TestOpenAILengthFinishReasonRepair:
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
@@ -266,11 +274,11 @@ class TestOpenAILengthFinishReasonRepair:
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert len(response.content.explicit) == 2
         assert response.content.explicit[0].content == "hermes is 25 years old"
 
@@ -300,15 +308,15 @@ class TestAnthropicJsonRepair:
                 model="claude-3-sonnet",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert len(response.content.explicit) >= 1
 
     async def test_broken_anthropic_response_falls_back_to_empty(self) -> None:
-        """Completely broken Anthropic JSON should fall back to empty PromptRepresentation."""
+        """Completely broken Anthropic JSON should fall back to empty ExtractedRepresentation."""
         mock_client = _make_anthropic_mock(
             "random gibberish that is not json", stop_reason="max_tokens"
         )
@@ -319,15 +327,15 @@ class TestAnthropicJsonRepair:
                 model="claude-3-sonnet",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert response.content.explicit == []
 
-    async def test_non_prompt_representation_reraises(self) -> None:
-        """Non-PromptRepresentation with broken JSON should raise."""
+    async def test_non_extracted_representation_reraises(self) -> None:
+        """Non-ExtractedRepresentation with broken JSON should raise."""
         mock_client = _make_anthropic_mock("not json", stop_reason="max_tokens")
 
         with (
@@ -373,11 +381,11 @@ class TestGeminiJsonRepair:
                 model="gemini-2.5-flash",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert len(response.content.explicit) == 2
 
     async def test_gemini_broken_text_falls_back_to_empty(self) -> None:
@@ -395,11 +403,11 @@ class TestGeminiJsonRepair:
                 model="gemini-2.5-flash",
                 prompt="Analyze messages",
                 max_tokens=2000,
-                response_model=PromptRepresentation,
+                response_model=ExtractedRepresentation,
                 json_mode=True,
             )
 
-        assert isinstance(response.content, PromptRepresentation)
+        assert isinstance(response.content, ExtractedRepresentation)
         assert response.content.explicit == []
 
 

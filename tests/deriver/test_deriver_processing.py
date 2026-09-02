@@ -9,7 +9,7 @@ from src import models
 from src.config import settings
 from src.deriver.deriver import process_representation_tasks_batch
 from src.llm import HonchoLLMCallResponse
-from src.utils.representation import PromptRepresentation, Representation
+from src.utils.representation import ExtractedRepresentation, Representation
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
@@ -32,7 +32,7 @@ class TestDeriverProcessing:
         configuration.reasoning.enabled = True
 
         mock_response = HonchoLLMCallResponse(
-            content=PromptRepresentation(explicit=[]),
+            content=ExtractedRepresentation(explicit=[]),
             input_tokens=10,
             output_tokens=5,
             finish_reasons=["STOP"],
@@ -86,7 +86,7 @@ class TestDeriverProcessing:
         )
 
         mock_response = HonchoLLMCallResponse(
-            content=PromptRepresentation(explicit=[]),
+            content=ExtractedRepresentation(explicit=[]),
             input_tokens=10,
             output_tokens=5,
             finish_reasons=["STOP"],
@@ -233,7 +233,7 @@ class TestDeriverProcessing:
         configuration.reasoning.enabled = True
 
         mock_response = HonchoLLMCallResponse(
-            content=PromptRepresentation(explicit=[]),
+            content=ExtractedRepresentation(explicit=[]),
             input_tokens=10,
             output_tokens=5,
             finish_reasons=["STOP"],
@@ -284,7 +284,7 @@ class TestDeriverProcessing:
         configuration.reasoning.enabled = True
 
         mock_response = HonchoLLMCallResponse(
-            content=PromptRepresentation(explicit=[]),
+            content=ExtractedRepresentation(explicit=[]),
             input_tokens=100,
             output_tokens=5,
             finish_reasons=["STOP"],
