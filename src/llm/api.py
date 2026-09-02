@@ -18,7 +18,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel
 from sentry_sdk.ai.monitoring import ai_track
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import ValidationException
@@ -46,6 +46,13 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 M = TypeVar("M", bound=BaseModel)
+
+
+def is_transient_llm_error(exc: BaseException) -> bool:
+    """A quota rejection stays rejected until its reset; only other failures earn a retry."""
+    if getattr(exc, "status_code", None) == 429 and "usage_limit_reached" in str(exc):
+        return False
+    return True
 
 
 def _message_chars(messages: list[dict[str, Any]] | None) -> int:
@@ -346,6 +353,7 @@ async def honcho_llm_call(
 
     if enable_retry:
         decorated = retry(
+            retry=retry_if_exception(is_transient_llm_error),
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
