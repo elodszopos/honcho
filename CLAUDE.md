@@ -105,15 +105,11 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 | Compose hostname reached from the host | `failed to resolve host 'database'` | `.env` carries the in-network `database:5432`; compose publishes the same Postgres on `127.0.0.1:18732` and Redis on `127.0.0.1:18733` |
 | Embedding width | `expected 1024 dimensions, not 1536` | Fixtures hardcode 1536-wide vectors (`tests/utils/test_agent_tools.py`); a deployment on another embedding model sets `EMBEDDING_VECTOR_DIMENSIONS` to its own width, and every test that writes an embedding then errors |
 
-Whole suite, from a host whose `.env` targets the compose network:
-
-```bash
-set -a && . ./.env && set +a
-PYTHON_DOTENV_DISABLED=1 \
-  DB_CONNECTION_URI="${DB_CONNECTION_URI/@database:5432/@127.0.0.1:18732}" \
-  EMBEDDING_VECTOR_DIMENSIONS=1536 \
-  uv run pytest tests/
-```
+`$HOME/.hermes/scripts/honcho-run-tests.sh` applies all three and passes its arguments
+through to pytest, so `honcho-run-tests.sh` runs the suite and
+`honcho-run-tests.sh tests/utils/test_agent_tools.py -q` runs one file. It is the same
+runner the daily upstream-gap job uses, so a hand run and the recorded baseline cannot
+diverge.
 
 Prompt, schema and SDK-shape tests need none of that -- `tests/test_llm_writing_contract.py` and `tests/deriver/test_agent_writing_contract.py` run against a bare `uv run pytest`.
 
