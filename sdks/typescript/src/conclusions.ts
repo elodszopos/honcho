@@ -11,6 +11,8 @@ import type {
 } from './types/api'
 import { normalizeSearchQuery, RepresentationOptionsSchema } from './validation'
 
+export const MAX_CONCLUSION_CHARS = 800
+
 /**
  * Filter keys that define a conclusion scope (the observer/observed peer pair).
  * They are set from the scope itself, so a caller must not pass them in `filters`.
@@ -52,7 +54,7 @@ function rejectReservedFilterKeys(
  * Parameters for creating a conclusion.
  */
 export interface ConclusionCreateParams {
-  /** The conclusion content/text */
+  /** Concise conclusion text; maximum 800 Unicode characters. */
   content: string
   /** The session this conclusion relates to (ID string or Session object) */
   sessionId?: string | Session
@@ -364,6 +366,11 @@ export class ConclusionScope {
     const requestConclusions: Array<Record<string, unknown>> = []
 
     for (const obs of conclusionArray) {
+      if ([...obs.content].length > MAX_CONCLUSION_CHARS) {
+        throw new Error(
+          `conclusion content cannot exceed ${MAX_CONCLUSION_CHARS} characters`
+        )
+      }
       if (obs.action === 'create' && obs.targetId !== undefined) {
         throw new Error('create decisions cannot set targetId')
       }

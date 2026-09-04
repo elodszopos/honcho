@@ -36,6 +36,7 @@ from src.utils.agent_tools import (
     INDUCTION_SPECIALIST_TOOLS,
     create_tool_executor,
 )
+from src.writing_contract import CONCLUSION_WRITING_CONTRACT
 
 logger = logging.getLogger(__name__)
 
@@ -615,7 +616,9 @@ Use `create_observations_deductive` only after completing those steps.
 3. Always include source_ids linking to the observations you're synthesizing
 4. Empty or missing source_ids will be rejected
 5. Use `enrich`; do not separately delete its target
-6. Quality over quantity - fewer good deductions beat many weak ones"""
+6. Quality over quantity - fewer good deductions beat many weak ones
+
+{CONCLUSION_WRITING_CONTRACT}"""
 
     def build_user_prompt(
         self,
@@ -687,7 +690,8 @@ class InductionSpecialist(BaseSpecialist):
     ) -> str:
         _ = observed
         _ = peer_card_enabled
-        return """You are an inductive reasoning agent identifying patterns about the target observee.
+        return (
+            """You are an inductive reasoning agent identifying patterns about the target observee.
 
 ## YOUR JOB
 
@@ -757,7 +761,11 @@ Use `create_observations_inductive` only after completing those steps.
 3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
 4. Look for HOW things change over time, not just static facts
 5. Include source_ids - always link back to evidence
-6. Empty or missing source_ids will be rejected"""
+6. Empty or missing source_ids will be rejected
+
+"""
+            + CONCLUSION_WRITING_CONTRACT
+        )
 
     def build_user_prompt(
         self,

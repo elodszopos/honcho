@@ -30,6 +30,7 @@ from src.schemas.configuration import (
     WorkspaceConfiguration,
 )
 from src.utils.types import DocumentLevel
+from src.writing_contract import MAX_CONCLUSION_CHARS
 
 # ---------------------------------------------------------------------------
 # Metadata validation helpers
@@ -456,7 +457,9 @@ class Conclusion(BaseModel):
         ),
     )
     admission: dict[str, Any] = Field(validation_alias="internal_metadata")
-    admission_history: list[dict[str, Any]] = Field(validation_alias="internal_metadata")
+    admission_history: list[dict[str, Any]] = Field(
+        validation_alias="internal_metadata"
+    )
     created_at: datetime.datetime
 
     @field_validator("admission", mode="before")
@@ -515,7 +518,7 @@ class ConclusionQuery(BaseModel):
 class ConclusionCreate(BaseModel):
     """One agent- or operator-admitted conclusion with evidence and provenance."""
 
-    content: Annotated[str, Field(min_length=1, max_length=65535)]
+    content: Annotated[str, Field(min_length=1, max_length=MAX_CONCLUSION_CHARS)]
     observer_id: str = Field(..., description="The peer making the conclusion")
     observed_id: str = Field(..., description="The peer the conclusion is about")
     session_id: str | None = Field(
@@ -550,9 +553,10 @@ class ConclusionCreate(BaseModel):
     )
     premises: list[str] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
-    pattern_type: Literal[
-        "preference", "behavior", "personality", "tendency", "correlation"
-    ] | None = None
+    pattern_type: (
+        Literal["preference", "behavior", "personality", "tendency", "correlation"]
+        | None
+    ) = None
     confidence: Literal["high", "medium", "low"] | None = None
 
     _token_count: int = PrivateAttr(default=0)

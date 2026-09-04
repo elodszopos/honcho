@@ -7,6 +7,7 @@ export {
   Conclusion,
   type ConclusionCreateParams,
   ConclusionScope,
+  MAX_CONCLUSION_CHARS,
 } from './conclusions'
 // HTTP infrastructure
 export {

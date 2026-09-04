@@ -265,6 +265,7 @@ export interface ConclusionResponse {
 }
 
 export interface ConclusionCreateParams {
+  /** Concise conclusion text; maximum 800 Unicode characters. */
   content: string
   observer_id: string
   observed_id: string

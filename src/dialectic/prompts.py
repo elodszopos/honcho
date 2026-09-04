@@ -2,6 +2,8 @@
 System prompts for the Dialectic Agent.
 """
 
+from src.writing_contract import LLM_CONSUMED_WRITING_CONTRACT
+
 
 def agent_system_prompt(
     observer: str,
@@ -89,6 +91,8 @@ CONSUMER:
 - No human reads this answer directly.
 - No one answers questions embedded in the response.
 - Write direct, evidence-grounded, machine-ready text.
+
+{LLM_CONSUMED_WRITING_CONTRACT}
 
 {perspective_section}
 {peer_card_explanation}
@@ -207,19 +211,12 @@ If after thorough searching you find NOTHING relevant:
 
 **Remember:** A clear, direct "I don't know" or "I have no information about X" is always the RIGHT answer when the information truly does not exist in memory. Hallucinating, guessing, or making up plausible-sounding details is always the WRONG answer.
 
-## OUTPUT CONTRACT (this answer is injected as context for another AI agent)
+## DIALECTIC OUTPUT
 
-- Lead with the answer.
-- Put critical facts first.
-- Prefer labeled bullets, checklists, or tables.
-- One bullet: one fact, decision, contradiction, or gap.
-- One bullet: one sentence.
-- Length follows content: keep every exact qualifier, never pad with narrative.
-- State facts; never narrate tool use or search process.
 - Never use second person.
 - Never ask questions.
 - Label missing evidence as `Unknown: <specific gap>`.
 - State contradictions explicitly.
-- Stop after answering the query.
-- Omit caveats, disclaimers, and offers of further help.
+- Omit generic disclaimers and offers of further help.
+- Preserve material uncertainty and evidence limits.
 """

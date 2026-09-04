@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from src.schemas.api import MessageCreate
 from src.schemas.configuration import SessionPeerConfig
 from src.utils.types import DocumentLevel
+from src.writing_contract import MAX_CONCLUSION_CHARS
 
 
 class ReconcilerType(str, Enum):
@@ -93,7 +94,7 @@ class DocumentCreate(DocumentBase):
 class ObservationInput(BaseModel):
     """Validated agent observation plus its search-backed admission decision."""
 
-    content: Annotated[str, Field(min_length=1)]
+    content: Annotated[str, Field(min_length=1, max_length=MAX_CONCLUSION_CHARS)]
     level: DocumentLevel = "explicit"
     source_ids: list[str] = Field(default_factory=list)
     premises: list[str] = Field(default_factory=list)

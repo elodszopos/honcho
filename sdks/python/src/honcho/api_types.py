@@ -429,7 +429,7 @@ class ConclusionCreateParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    content: str = Field(min_length=1, max_length=65535)
+    content: str = Field(min_length=1, max_length=800)
     observer_id: str
     observed_id: str
     session_id: str | None = None

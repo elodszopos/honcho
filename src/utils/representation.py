@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src import models
 from src.utils.formatting import parse_datetime_iso
+from src.writing_contract import MAX_CONCLUSION_CHARS
 
 
 def _strip_microseconds_and_timezone(timestamp: datetime) -> datetime:
@@ -139,6 +140,10 @@ class ContradictionObservationBase(BaseModel):
 class AdmissionDecision(ExplicitObservationBase):
     """One admission decision tied to a searched candidate and exact message evidence."""
 
+    content: str = Field(
+        max_length=MAX_CONCLUSION_CHARS,
+        description="The concise explicit conclusion",
+    )
     admission_case_id: int = Field(
         ge=0,
         description="The admission case identifier supplied in the prompt.",
@@ -163,7 +168,10 @@ class AdmissionRepresentation(BaseModel):
 class ExtractedObservation(BaseModel):
     """A durable-memory candidate that has not yet been admitted."""
 
-    content: str = Field(description="The candidate observation")
+    content: str = Field(
+        max_length=MAX_CONCLUSION_CHARS,
+        description="The concise candidate conclusion",
+    )
 
 
 class ExtractedRepresentation(BaseModel):
@@ -709,6 +717,7 @@ class Representation(BaseModel):
                 if doc.level == "contradiction"
             ],
         )
+
 
 def _safe_datetime_from_metadata(
     internal_metadata: dict[str, Any], fallback_datetime: datetime

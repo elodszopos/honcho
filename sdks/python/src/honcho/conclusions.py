@@ -54,7 +54,7 @@ def _reject_reserved_filter_keys(
 
 
 class ConclusionCreateParams(BaseModel):
-    content: str
+    content: str = Field(min_length=1, max_length=800)
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
     action: Literal["create", "enrich"]
@@ -78,9 +78,10 @@ class ConclusionCreateParams(BaseModel):
     source_ids: list[str] | None = None
     premises: list[str] | None = None
     sources: list[str] | None = None
-    pattern_type: Literal[
-        "preference", "behavior", "personality", "tendency", "correlation"
-    ] | None = None
+    pattern_type: (
+        Literal["preference", "behavior", "personality", "tendency", "correlation"]
+        | None
+    ) = None
     confidence: Literal["high", "medium", "low"] | None = None
 
     @model_validator(mode="after")

@@ -30,6 +30,7 @@ from src.telemetry.prometheus.metrics import (
 )
 from src.utils.formatting import utc_now_iso
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
+from src.writing_contract import LLM_CONSUMED_WRITING_CONTRACT
 
 from .. import crud, models
 
@@ -105,18 +106,16 @@ def short_summary_prompt(
 ) -> str:
     """Generate the short summary prompt."""
     return c(f"""
-You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
+{LLM_CONSUMED_WRITING_CONTRACT}
 
-1. Key facts and information shared (**Capture as many explicit facts as possible**)
-2. User preferences, opinions, and questions
-3. Important context and requests
-4. Core topics discussed
+## SHORT SUMMARY
 
-If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
-
-Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
-
-Return only the summary without any explanation or meta-commentary.
+- Produce compact context for a future LLM turn.
+- Capture durable facts, preferences, decisions, requests, unresolved issues, and core topics.
+- Incorporate useful prior-summary content without repeating it.
+- Use one fact, decision, request, or unresolved issue per bullet.
+- Preserve chronology only when sequence changes meaning.
+- Return only the summary.
 
 <previous_summary>
 {previous_summary_text}
@@ -137,20 +136,17 @@ def long_summary_prompt(
 ) -> str:
     """Generate the long summary prompt."""
     return c(f"""
-You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
+{LLM_CONSUMED_WRITING_CONTRACT}
 
-1. Key facts and information shared (**Capture as many explicit facts as possible**)
-2. User preferences, opinions, and questions
-3. Important context and requests
-4. Core topics discussed in detail
-5. User's apparent emotional state and personality traits
-6. Important themes and patterns across the conversation
+## LONG SUMMARY
 
-If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
-
-Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
-
-Return only the summary without any explanation or meta-commentary.
+- Produce comprehensive, structured context for future LLM turns.
+- Capture durable facts, preferences, decisions, requests, unresolved issues, and supported patterns.
+- Incorporate useful prior-summary content without repeating it.
+- Group related information under short headings.
+- Use one fact, decision, request, or unresolved issue per bullet.
+- Preserve chronology only when sequence changes meaning.
+- Return only the summary.
 
 <previous_summary>
 {previous_summary_text}

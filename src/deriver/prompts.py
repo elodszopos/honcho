@@ -9,6 +9,7 @@ from functools import cache
 from inspect import cleandoc as c
 
 from src.utils.tokens import estimate_tokens
+from src.writing_contract import CONCLUSION_WRITING_CONTRACT
 
 
 def _normalized_custom_instructions(custom_instructions: str | None) -> str | None:
@@ -121,13 +122,7 @@ RULES:
 - Contextualize each observation sufficiently (e.g. "the user is nervous about the job interview at the pharmacy" not just "the user is nervous")
 - State each fact once, in its most general wording -- never several variants of the same fact, and never a project-bound wording when a general one is true.
 
-OUTPUT TEXT:
-- One conclusion: one fact or preference.
-- One conclusion: one short sentence.
-- Length follows content: keep every exact qualifier, never pad with narrative.
-- Split independent facts into separate conclusions.
-- Use direct factual wording.
-- Exclude narrative and rationale.
+{CONCLUSION_WRITING_CONTRACT}
 
 SELECTIVITY CRITERIA -- a fact must pass ALL four to be extracted:
 1. DURABLE: still true and worth knowing weeks or months from now. Not a one-off status update, a mid-task state, or something whose truth expires within days.

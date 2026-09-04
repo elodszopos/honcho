@@ -4,6 +4,10 @@ import pytest
 
 from src.deriver.prompts import minimal_deriver_prompt
 from src.dialectic.prompts import agent_system_prompt
+from src.writing_contract import (
+    CONCLUSION_WRITING_CONTRACT,
+    LLM_CONSUMED_WRITING_CONTRACT,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -24,14 +28,11 @@ def test_deriver_requires_atomic_conclusion_text():
         messages="USER: example",
     )
 
-    for rule in (
-        "One conclusion: one fact or preference.",
-        "One conclusion: one short sentence.",
-        "Length follows content: keep every exact qualifier, never pad with narrative.",
-        "Split independent facts into separate conclusions.",
-        "Exclude narrative and rationale.",
-    ):
-        assert rule in prompt
+    assert CONCLUSION_WRITING_CONTRACT in prompt
+    assert "Target 500 characters." in prompt
+    assert "Never exceed 800 characters." in prompt
+    assert "semantic compression, not concatenation" in prompt
+    assert "keep every exact qualifier" not in prompt
 
     assert "25 words" not in prompt
 
@@ -43,14 +44,11 @@ def test_dialectic_requires_atomic_machine_context():
         observer_peer_card=None,
         observed_peer_card=None,
     )
-    block = prompt.split("## OUTPUT CONTRACT", 1)[1]
+    assert LLM_CONSUMED_WRITING_CONTRACT in prompt
+    block = prompt.split("## DIALECTIC OUTPUT", 1)[1]
 
-    for rule in (
-        "Prefer labeled bullets, checklists, or tables.",
-        "One bullet: one fact, decision, contradiction, or gap.",
-        "Length follows content: keep every exact qualifier, never pad with narrative.",
-        "Label missing evidence as `Unknown: <specific gap>`.",
-    ):
-        assert rule in block
+    assert "Label missing evidence as `Unknown: <specific gap>`." in block
+    assert "Preserve material uncertainty and evidence limits." in block
+    assert "keep every exact qualifier" not in prompt
 
     assert "25 words" not in block

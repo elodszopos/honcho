@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent Writing Contract
+
+- Read `$HOME/.hermes/hermes-agent/agent/agent-writing-contract.md` first.
+- Apply it to every agent-consumed prompt, template, task body, and instruction.
+- Use `src/writing_contract.py` as the runtime owner for Honcho-authored LLM text.
+- Keep LLM-facing text compact, atomic, and structured.
+- Keep human-facing text natural and plainspoken unless the user requests another style.
+- Preserve raw messages, quotes, search queries, and machine data exactly; they are inputs, not authored prose.
+
 # Honcho Overview
 
 ## What is Honcho?

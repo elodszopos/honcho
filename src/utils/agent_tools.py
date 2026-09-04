@@ -32,6 +32,7 @@ from src.utils.types import (
     get_current_iteration,
     get_current_provider_tool_call_id,
 )
+from src.writing_contract import MAX_CONCLUSION_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,8 @@ def _base_observation_properties() -> dict[str, Any]:
     return {
         "content": {
             "type": "string",
-            "description": "The observation content",
+            "maxLength": MAX_CONCLUSION_CHARS,
+            "description": "The concise observation content",
         },
         "level": {
             "type": "string",
@@ -258,6 +260,7 @@ def _deductive_observation_item_schema() -> dict[str, Any]:
         "properties": {
             "content": {
                 "type": "string",
+                "maxLength": MAX_CONCLUSION_CHARS,
                 "description": "The deductive conclusion as a self-contained statement",
             },
             "source_ids": {
@@ -285,6 +288,7 @@ def _inductive_observation_item_schema() -> dict[str, Any]:
         "properties": {
             "content": {
                 "type": "string",
+                "maxLength": MAX_CONCLUSION_CHARS,
                 "description": "The inductive pattern or generalization as a self-contained statement",
             },
             "source_ids": {
@@ -1392,9 +1396,7 @@ async def _handle_create_observations_impl(
             parent_category=ctx.parent_category,
             agent_model=ctx.agent_model,
             source_tool_call_id=get_current_provider_tool_call_id(),
-            entry_origin=(
-                "deriver_agent" if ctx.current_messages else "dreamer_agent"
-            ),
+            entry_origin=("deriver_agent" if ctx.current_messages else "dreamer_agent"),
         )
 
     # Merge validation and embedding failures
