@@ -95,6 +95,30 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 - Typechecking: `uv run basedpyright`
 - Format code: `uv run ruff format src/`
 
+### Local Test Environment
+
+`uv run pytest tests/` passes only when `.env` names a database the host can reach and the vector width the fixtures use. On a machine running the Docker stack, neither holds, and all three traps below report as collection errors rather than failures.
+
+| Trap | Symptom | Resolution |
+|---|---|---|
+| `.env` outranks the process environment | An inline `DB_CONNECTION_URI=...` changes nothing; the old value still resolves | `src/config.py` calls `load_dotenv(override=True)` at import, ahead of the `env > .env` order its own `settings_customise_sources` returns. `PYTHON_DOTENV_DISABLED=1` turns it off, and every setting then has to come from the environment |
+| Compose hostname reached from the host | `failed to resolve host 'database'` | `.env` carries the in-network `database:5432`; compose publishes the same Postgres on `127.0.0.1:18732` and Redis on `127.0.0.1:18733` |
+| Embedding width | `expected 1024 dimensions, not 1536` | Fixtures hardcode 1536-wide vectors (`tests/utils/test_agent_tools.py`); a deployment on another embedding model sets `EMBEDDING_VECTOR_DIMENSIONS` to its own width, and every test that writes an embedding then errors |
+
+Whole suite, from a host whose `.env` targets the compose network:
+
+```bash
+set -a && . ./.env && set +a
+PYTHON_DOTENV_DISABLED=1 \
+  DB_CONNECTION_URI="${DB_CONNECTION_URI/@database:5432/@127.0.0.1:18732}" \
+  EMBEDDING_VECTOR_DIMENSIONS=1536 \
+  uv run pytest tests/
+```
+
+Prompt, schema and SDK-shape tests need none of that -- `tests/test_llm_writing_contract.py` and `tests/deriver/test_agent_writing_contract.py` run against a bare `uv run pytest`.
+
+The suite builds and discards its own `test_db*` database per xdist worker and backs the cache with fakeredis, so a run leaves the live `postgres` database and the deriver's queue alone.
+
 ### SDK Testing
 
 #### TypeScript SDK
