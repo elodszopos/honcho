@@ -4,7 +4,7 @@ adopts upstream's value goes green unless the literal is asserted here."""
 import json
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, get_type_hints
 
 import pytest
 from pydantic import ValidationError
@@ -111,6 +111,34 @@ def test_a_deriver_write_must_name_its_source_messages():
             agent_trace_id="test",
             agent_model="test",
         )
+
+
+def _observation_input(**overrides: Any) -> Any:
+    fields: dict[str, Any] = {
+        "content": "the user prefers tea",
+        "action": "create",
+        "reason_for_entry": "Distinct durable fact",
+        "search_query": "tea",
+        "searched_conclusion_ids": [],
+    }
+    fields.update(overrides)
+    return schemas.ObservationInput(**fields)
+
+
+def test_admission_input_refuses_blank_text_and_strips_nul_bytes():
+    for field in ("content", "reason_for_entry", "search_query"):
+        with pytest.raises(ValidationError, match="non-whitespace"):
+            _observation_input(**{field: " \n\t "})
+
+    assert _observation_input(content="a\x00b").content == "ab"
+
+
+def test_a_representation_save_returns_a_count_so_an_empty_save_is_falsy():
+    hints = get_type_hints(
+        crud_representation.RepresentationManager.save_representation
+    )
+
+    assert hints["return"] is int
 
 
 def test_the_two_representation_models_are_the_only_response_shapes():

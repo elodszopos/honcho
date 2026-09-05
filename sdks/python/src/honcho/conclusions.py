@@ -124,6 +124,8 @@ class Conclusion:
         level: Reasoning level ("explicit", "deductive", "inductive",
             "contradiction"). "explicit" conclusions are extracted directly
             from messages; the others are derived during dreaming.
+        times_derived: Number of times this conclusion has been independently
+            derived.
         created_at: Timestamp for when the conclusion was created
     """
 
@@ -135,6 +137,7 @@ class Conclusion:
     level: ConclusionLevel = "explicit"
     admission: dict[str, Any]
     admission_history: list[dict[str, Any]]
+    times_derived: int = 1
     created_at: datetime.datetime
 
     def __init__(
@@ -148,6 +151,7 @@ class Conclusion:
         level: ConclusionLevel = "explicit",
         admission: dict[str, Any] | None = None,
         admission_history: list[dict[str, Any]] | None = None,
+        times_derived: int = 1,
     ) -> None:
         self.id = id
         self.content = content
@@ -157,6 +161,7 @@ class Conclusion:
         self.level = level
         self.admission = admission or {}
         self.admission_history = admission_history or []
+        self.times_derived = times_derived
         self.created_at = created_at
 
     @classmethod
@@ -171,6 +176,7 @@ class Conclusion:
             level=data.level,
             admission=data.admission,
             admission_history=data.admission_history,
+            times_derived=data.times_derived,
             created_at=data.created_at,
         )
 

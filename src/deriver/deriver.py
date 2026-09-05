@@ -97,7 +97,7 @@ async def process_representation_tasks_batch(
         queue_item_message_ids: Message IDs from queue items being processed
         hit_batch_token_cap: queue batcher clamped this batch to fit
         was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
-        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
     """
     if not messages:
         return
@@ -583,6 +583,9 @@ async def process_representation_tasks_batch(
             was_flush_enabled=was_flush_enabled,
             hit_batch_token_cap=hit_batch_token_cap,
             hit_input_token_cap=hit_input_token_cap,
+            # TODO(DEFERRED): the four dedup counters on this event stay at their schema
+            # default because the admission path never dedups. Plan B in
+            # PLAN-reinforcement.md would give exact_dup_existing_count a real value.
             observer_count=successful_observer_count,
         )
     )

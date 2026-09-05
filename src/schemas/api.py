@@ -178,6 +178,15 @@ class PeerRepresentationGet(BaseModel):
     session_id: str | None = Field(
         None, description="Optional session ID within which to scope the representation"
     )
+    filters: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional filters to scope the representation. This endpoint "
+            "supports only the 'session_id' key: a session id, a list of "
+            'session ids, or {"in": [...]}. When session_id is also set, it '
+            "must be included in the allowlist."
+        ),
+    )
     target: str | None = Field(
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
@@ -460,6 +469,10 @@ class Conclusion(BaseModel):
     admission_history: list[dict[str, Any]] = Field(
         validation_alias="internal_metadata"
     )
+    times_derived: int = Field(
+        default=1,
+        description="Number of times this conclusion has been independently derived.",
+    )
     created_at: datetime.datetime
 
     @field_validator("admission", mode="before")
@@ -526,6 +539,10 @@ class ConclusionCreate(BaseModel):
         description="A session ID to store the conclusion in, if specified",
     )
     level: DocumentLevel = "explicit"
+    # TODO(DEFERRED): add a third verb, "reinforce" -- target_id, no content, bumps
+    # times_derived and appends an admission_history entry. The janitor's tools are create
+    # plus soft-delete, so absorbed duplicates take their counts with them today. Plan C in
+    # PLAN-reinforcement.md; mirrored in mcp/src/tools/conclusions.ts and both SDKs.
     action: Literal["create", "enrich"]
     target_id: str | None = None
     reason_for_entry: str = Field(min_length=1)
@@ -680,6 +697,16 @@ class DialecticOptions(BaseModel):
     session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"
     )
+    filters: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional filters to scope recall. This endpoint supports only the "
+            "'session_id' key: a session id, a list of session ids, or "
+            '{"in": [...]}. Recall (conclusions and messages) is restricted to '
+            "the allowlist; unsupported keys are rejected. When session_id is "
+            "also set, it must be included in the allowlist."
+        ),
+    )
     target: str | None = Field(
         None,
         description="Optional peer to get the representation for, from the perspective of this peer",
@@ -691,6 +718,16 @@ class DialecticOptions(BaseModel):
     reasoning_level: ReasoningLevel = Field(
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",
+    )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+            " Only a conservative subset of JSON Schema is supported; unsupported"
+            "  schemas are rejected with 422. Constraint keywords (minItems, "
+            " maxLength, ...) are hints to the model, not enforced server-side."
+        ),
     )
 
     @field_validator("query", mode="after")
@@ -777,6 +814,14 @@ class ScheduleDreamRequest(BaseModel):
     dream_type: DreamType = Field(..., description="Type of dream to schedule")
     session_id: str | None = Field(
         None, description="Session ID to scope the dream to if specified"
+    )
+    rebuild: bool = Field(
+        False,
+        description=(
+            "card_refresh dreams only: rebuild the peer card solely from "
+            "observations currently in the collection, without injecting the "
+            "existing card (use after removals)"
+        ),
     )
 
 

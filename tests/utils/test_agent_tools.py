@@ -38,6 +38,8 @@ from src.utils.agent_tools import (
     create_observations,
     create_tool_executor,
     extract_preferences,
+    get_observation_context,
+    get_recent_history,
 )
 
 # =============================================================================
@@ -126,7 +128,7 @@ async def tool_test_data(
     # Commit so data is visible to independent tracked_db sessions.
     # Tool handlers no longer share the test's db_session — they open
     # their own short-lived sessions via tracked_db.
-    # _truncate_all_tables handles cleanup between tests.
+    # _clear_all_tables handles cleanup between tests.
     await db_session.commit()
 
     yield workspace, peer1, peer2, session, messages, documents
@@ -276,6 +278,36 @@ class TestCreateObservations:
         assert doc.level == "deductive"
         assert doc.source_ids == source_ids
 
+    async def test_non_deriver_context_rejects_explicit(
+        self,
+        db_session: AsyncSession,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Session-purity invariant: agents without current_messages (dreamer
+        specialists, dialectic) must not create explicit-level observations,
+        even when they pass level='explicit' to the generic tool."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {"content": "Claims to be a doctor", "level": "explicit"},
+                ]
+            },
+        )
+
+        assert isinstance(result, str)
+        assert "ERROR" in result
+        assert "explicit" in result
+
+        # Verify nothing landed in the DB
+        stmt = select(models.Document).where(
+            models.Document.content == "Claims to be a doctor"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is None
+
     async def test_source_ids_display_prefix_is_stripped(
         self,
         db_session: AsyncSession,
@@ -393,6 +425,7 @@ class TestCreateObservations:
         assert first.agent_trace_id == "deriver-run-1"
         assert first.agent_model == "test-model"
         assert first.entry_origin == "deriver_agent"
+
 
     async def test_create_observations_rejects_missing_agent_model(
         self,
@@ -725,6 +758,7 @@ class TestSearchMemory:
             context_window: int = 2,
             embedding: list[float] | None = None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (workspace_name, session_name, query, limit, context_window, observer)
             fallback_embeddings.append(embedding)
@@ -833,6 +867,7 @@ class TestSearchMessagesTemporal:
             context_window: int = 2,
             embedding: list[float] | None = None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (
                 workspace_name,
@@ -1426,6 +1461,7 @@ class TestExtractPreferences:
             context_window: int,
             embedding: list[float] | None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (limit, context_window, observer)
             embedding_args.append(embedding)
@@ -1772,3 +1808,63 @@ class TestObserverPeerNameWiring:
         await _handle_get_messages_by_date_range(ctx, {"after_date": "2024-01-01"})
 
         assert captured_kwargs["observer"] == ctx.observer
+
+
+@pytest.mark.asyncio
+class TestSessionAllowlistFailClosed:
+    """A specific session_name outside the session_allowlist allowlist must fail closed.
+
+    Routes guard this too, but these CRUD/tool functions are reachable directly
+    from the dialectic loop, so the allowlist is enforced at the boundary.
+    """
+
+    async def test_get_recent_history_respects_allowlist(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, peer2, session, _messages, _ = tool_test_data
+
+        # session IS in the allowlist -> history returned
+        allowed = await get_recent_history(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observed=peer2.name,
+            session_allowlist=[session.name],
+        )
+        assert allowed  # non-empty
+
+        # session is NOT in the allowlist -> fail closed
+        blocked = await get_recent_history(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observed=peer2.name,
+            session_allowlist=["some-other-session"],
+        )
+        assert blocked == []
+
+    async def test_get_observation_context_fails_closed(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, peer1, _peer2, session, messages, _ = tool_test_data
+        blocked = await get_observation_context(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            message_ids=[messages[0].id],
+            observer=peer1.name,
+            session_allowlist=["some-other-session"],
+        )
+        assert blocked == []
+
+    async def test_get_messages_by_date_range_fails_closed(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, _peer2, session, _messages, _ = tool_test_data
+        blocked = await crud.get_messages_by_date_range(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            session_allowlist=["some-other-session"],
+        )
+        assert blocked == []

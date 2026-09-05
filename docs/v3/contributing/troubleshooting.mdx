@@ -109,7 +109,7 @@ Messages are stored but no observations, summaries, or representations are being
    ```bash
    DERIVER_WORKERS=4
    ```
-5. **Representation Batch Max** — By default the deriver buffers representation work until a session has enough tokens for that representation, set via `DERIVER_REPRESENTATION_BATCH_MAX_TOKENS`. Sub-threshold tails become eligible after `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` (default 1800 seconds), so quiet sessions eventually flush without disabling batching globally. Set the age to `0` for legacy behavior where sub-threshold tails wait indefinitely. See [token batching](/v3/documentation/core-concepts/reasoning#token-batching) for more details
+5. **Representation Batching** — By default the deriver buffers representation work until a work unit has accumulated enough tokens, set via `DERIVER_REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS` (`0` disables the accumulation gate). A separate setting, `DERIVER_REPRESENTATION_BATCH_TARGET_INPUT_TOKENS`, caps the conversation window fed to each deriver LLM call when draining a claimed work unit. Sub-threshold tails become eligible after `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` (default 1800 seconds), so quiet sessions eventually flush without disabling batching globally. Set the age to `0` for legacy behavior where sub-threshold tails wait indefinitely. See [token batching](/v3/documentation/core-concepts/reasoning#token-batching) for more details
 
 ## Alternative Provider Issues
 
@@ -203,6 +203,20 @@ uv run alembic history
 # Upgrade to latest
 uv run alembic upgrade head
 ```
+
+### "permission denied to create extension \"vector\""
+
+**Cause:** The role in `DB_CONNECTION_URI` is not a superuser and lacks privileges to create extensions. Honcho issues `CREATE EXTENSION IF NOT EXISTS vector` both before running migrations and again at server startup, so this fails in both places. `IF NOT EXISTS` does not help — Postgres checks the privilege before checking whether the extension exists.
+
+**Fix:** Preinstall pgvector once with a privileged role (superuser, or `rds_superuser` on RDS) in the Honcho database:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+The `IF NOT EXISTS` calls then short-circuit and the application role needs no extension privileges. This is the supported path for deployments where the platform, not the application, owns extension management.
+
+You won't hit this with `docker compose` — the bundled stack connects as `postgres`, a superuser, and its database service also creates the extension from `database/init.sql` on first boot. It comes up on managed Postgres, Kubernetes operators, and other setups where you bring your own database and its role is deliberately not a superuser.
 
 ## Cache & Redis
 
