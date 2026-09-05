@@ -23,10 +23,10 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `93dcf59c` (`v3.0.12`) |
-| Last upstream merge | `v3.0.12`, 2026-09-05 |
-| Carried surface | 75 files, +6,059 / -2,297 (2026-09-05) |
-| Collides with upstream | 43 of those paths, ranked in the dated gap report |
+| Fork point | `9380bf27` (`v3.1.0`) |
+| Last upstream merge | `v3.1.0`, 2026-09-06 |
+| Carried surface | 72 files, +4,711 / -2,318 (2026-09-06) |
+| Collides with upstream | 27 of those paths, ranked in the dated gap report |
 | Schema | unchanged; `migrations/` is byte-identical from the fork point through upstream's tip |
 
 ## Deliberately not carried
