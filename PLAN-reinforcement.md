@@ -6,15 +6,32 @@ carries the resulting rules.
 ## Problem
 
 The fork removed threshold-driven dedup on purpose and kept the machinery that *carries* a
-reinforcement count, but nothing generates that count any more. `times_derived` is 1 on every
-row the system writes, so every consumer of "most reinforced" is ordering by a constant.
+reinforcement count, but nothing generates that count any more — and the paths that rewrite a
+conclusion drop whatever it had already earned. Thirty percent of the live pool still carries
+reinforcement from before the rewrite; every enrichment of one of those rows spends it.
 
 ## Goal
 
-Restore a reinforcement signal without restoring a similarity threshold. Every change to a
-conclusion's count must remain a decision an agent made and recorded, in line with the
-admission contract. Counting is not judgement; the doctrine objects to the second, not the
-first.
+Restore a reinforcement signal without restoring a similarity threshold, and stop spending the
+one that is left. Every change to a conclusion's count must remain a decision an agent made and
+recorded, in line with the admission contract. Counting is not judgement; the doctrine objects
+to the second, not the first.
+
+## The invariant
+
+**A reinforcement count is never lowered.** Every path that rewrites, replaces or absorbs a
+conclusion carries forward what that conclusion already earned:
+
+| Path | Carries forward by |
+|---|---|
+| enrich | `max(previous + 1, supplied)` — A |
+| exact-content collision | incrementing the row that exists rather than inserting beside it — B |
+| janitor absorbing a duplicate | `reinforce` on the survivor before the soft-delete — C |
+| synthesist merge | sum for the duplicate bucket, max for fragments — decision 1 |
+
+The root hazard is the default. `create_observations` writes `times_derived = obs.times_derived
+or 1`, so any writer that does not supply a value silently resets the row to one. On these paths
+supplying it is not an optimisation; omitting it is data loss.
 
 ## Established
 
@@ -25,7 +42,7 @@ first.
 | Two config keys are inert | `DERIVER.DEDUPLICATE` and `DERIVER.DEDUPLICATE_MAX_DISTANCE`; no `deduplicate=` call site exists in `src/` |
 | The deriver never supplies a count | neither `agent_tools.py` nor `crud/representation.py` sets `times_derived` on a write |
 | Enrichment destroys the count | `create_observations` writes `times_derived=obs.times_derived or 1`; the predecessor's value reaches `admission_history` and stops there |
-| The synthesist preserves a constant | `jobs/synthesist.md` passes MAX of merged sources; MAX over a pool of ones is one |
+| The synthesist carries what it is handed | `jobs/synthesist.md` passes MAX of merged sources, and those values are real; nothing replenishes them |
 | The janitor cannot preserve it at all | its tools are create plus soft-delete, so absorbed duplicates take their counts with them |
 | Consumers are live, not decorative | `get_most_derived_observations` in `DREAMER_TOOLS`; `_query_documents_most_derived` inside `get_working_representation` |
 
@@ -73,13 +90,21 @@ value without a database connection of its own.
 | 2 | Does `reinforce` count against the janitor's cap | Exempt, because it destroys nothing, but named in the audit row of the delete it accompanies |
 | 3 | Does the deriver's admission prompt learn `reinforce` | Yes. Enrich-with-unchanged-content is a duplicate row in all but name, and costs a rewrite plus a re-embed |
 | 4 | Backfill | Start fresh. Every row keeps its current value and counts accumulate from here |
+| 5 | The four dedup counters on `RepresentationCompletedEvent` | B earns `exact_dup_existing_count`, so populate that one. The other three describe threshold dedup this fork refuses, and 0 is the correct reading rather than a gap. Upstream's event schema is left alone |
 
-## Still open
+## The live pool, measured 2026-09-06
 
-| # | Question | Notes |
-|---|---|---|
-| 1 | Do the four dedup fields on `RepresentationCompletedEvent` get repurposed | They keep their schema default today. B produces something close to `exact_dup_existing_count` |
-| 2 | What does the live distribution actually look like | A read-only count of `times_derived` values would show whether anything above 1 survives from before the admission rewrite. Not yet run |
+83 live conclusions. 25 of them carry `times_derived` above 1, peaking at 25, earned before the
+admission rewrite retired the path that incremented it. The pool is not flat, so most-derived
+recall does rank meaningfully today and the synthesist's MAX rule has real values to carry.
+
+That reinforcement is being spent, not merely frozen. Enrichment writes `times_derived` from the
+incoming conclusion, the deriver supplies none, so enriching a reinforced conclusion resets it to
+1 and leaves the earned count in `admission_history` where nothing reads it. One row has already
+lost its count this way.
+
+Plan A is therefore the first thing to build: it stops an active loss before it restores anything.
+The backfill ruling stands — rows keep the values they have, and nothing is reconstructed.
 
 ## Touch points
 

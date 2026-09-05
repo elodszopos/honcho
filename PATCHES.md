@@ -23,10 +23,10 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `9380bf27` (`v3.1.0`) |
-| Last upstream merge | `v3.1.0`, 2026-09-06 |
-| Carried surface | 72 files, +4,711 / -2,318 (2026-09-06) |
-| Collides with upstream | 27 of those paths, ranked in the dated gap report |
+| Fork point | `be543555` — upstream's tip; the backlog is closed |
+| Last upstream merge | tip, 2026-09-06 |
+| Carried surface | 73 files, +4,745 / -1,464 (2026-09-06) |
+| Collides with upstream | nothing ahead yet; the next pull's manifest comes from the gap report |
 | Schema | unchanged; `migrations/` is byte-identical from the fork point through upstream's tip |
 
 ## Deliberately not carried
