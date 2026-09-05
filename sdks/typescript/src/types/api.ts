@@ -262,6 +262,7 @@ export interface ConclusionResponse {
   level: ConclusionLevel
   admission: Record<string, unknown>
   admission_history: Array<Record<string, unknown>>
+  times_derived?: number
   created_at: string
 }
 

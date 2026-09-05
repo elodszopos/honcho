@@ -44,6 +44,15 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 - Upstream's tests that patch `crud.create_documents` and the summed-dedup-counts test. They
   exercise a function no production path reaches.
 
+## Standing verdicts for the rest of this pull
+
+`v3.1.0` brings the dialectic prompt rewrite (`ac67017a`), the workspace chat prompt
+(`c73f6a0b`) and a `crud.get_peer` signature change (`81d8409b`); the tip brings `a5fa8c39`
+and `9677f3d8`. Take upstream's tool rendering, its workspace prompt and its summary-dropped
+log wholesale. Take only the glossary from its new pair-prompt opening — the ROLE/CONSUMER
+header, the writing contract and the fenced examples stay. Retire this section when the last
+slice lands.
+
 ## Values set against upstream's
 
 Each is asserted in `tests/test_fork_held_values.py` against the **declared** default in

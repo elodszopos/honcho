@@ -108,6 +108,7 @@ export class Conclusion {
   readonly level: ConclusionLevel
   readonly admission: Record<string, unknown>
   readonly admissionHistory: Array<Record<string, unknown>>
+  readonly timesDerived: number
   readonly createdAt: string
 
   constructor(
@@ -119,7 +120,8 @@ export class Conclusion {
     createdAt: string,
     level: ConclusionLevel = 'explicit',
     admission: Record<string, unknown> = {},
-    admissionHistory: Array<Record<string, unknown>> = []
+    admissionHistory: Array<Record<string, unknown>> = [],
+    timesDerived: number = 1
   ) {
     this.id = id
     this.content = content
@@ -129,6 +131,7 @@ export class Conclusion {
     this.level = level
     this.admission = admission
     this.admissionHistory = admissionHistory
+    this.timesDerived = timesDerived
     this.createdAt = createdAt
   }
 
@@ -142,7 +145,8 @@ export class Conclusion {
       data.created_at,
       data.level,
       data.admission,
-      data.admission_history
+      data.admission_history,
+      data.times_derived
     )
   }
 

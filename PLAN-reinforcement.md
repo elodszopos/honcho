@@ -52,16 +52,34 @@ normalized content equals a live conclusion in the same collection increments ra
 inserting a twin. Identity, not similarity: no threshold, no ranking, nothing discarded. The
 safety net for a pre-write search that missed on session boundary or embedding drift.
 
-## Open questions
+## Read path — done
+
+The value was already accepted, persisted and returned by Postgres; only the read models
+dropped it. `Conclusion`, both SDK response models and both SDK conclusion classes now carry
+it, and the MCP list and query tools include it in their output.
+
+`jobs/synthesist.md` instructs the synthesist to fold into the more-reinforced conclusion by
+reading `times_derived` from the injected pool listing. That worked only because
+`scripts/steward/shared.py` falls back to querying Postgres directly when the SDK omits the
+field. The read path now supplies it, so that fallback short-circuits on its own and every
+other consumer — the MCP tools, the TypeScript SDK, the agent's conclusion tool — gets the
+value without a database connection of its own.
+
+## Decisions
+
+| # | Question | Ruling |
+|---|---|---|
+| 1 | Merge arithmetic | SUM for the explicit-duplicate bucket, MAX for inseparable fragments. The synthesist already names which bucket each delete falls in |
+| 2 | Does `reinforce` count against the janitor's cap | Exempt, because it destroys nothing, but named in the audit row of the delete it accompanies |
+| 3 | Does the deriver's admission prompt learn `reinforce` | Yes. Enrich-with-unchanged-content is a duplicate row in all but name, and costs a rewrite plus a re-embed |
+| 4 | Backfill | Start fresh. Every row keeps its current value and counts accumulate from here |
+
+## Still open
 
 | # | Question | Notes |
 |---|---|---|
-| 1 | MAX or SUM when the synthesist merges | SUM is truthful for the explicit-duplicate bucket, inflates for the inseparable-fragments bucket. MAX is the safe default and only starts mattering once A/B/C create spread |
-| 2 | Does `reinforce` count against the janitor's 20-or-10% cap | It removes nothing, but it is a mutation and the cap exists to bound autonomous change |
-| 3 | Does the deriver's admission prompt need to learn `reinforce` | A alone covers the refinement case; C is what avoids pointless rewrites. Prompt work is behavioural surface and needs its own verdict |
-| 4 | Do the four dedup fields on `RepresentationCompletedEvent` get repurposed | They default to 0 and are currently unpopulated. B produces something close to `exact_dup_existing_count` |
-| 5 | Backfill or start fresh | Existing rows carry predecessor counts in `admission_history`. Reconstructing from it is possible; starting everything at its current value is simpler and loses only history that is already flat |
-| 6 | What does the live distribution actually look like | A read-only count of `times_derived` values would show whether anything above 1 survives from before the admission rewrite. Not yet run |
+| 1 | Do the four dedup fields on `RepresentationCompletedEvent` get repurposed | They keep their schema default today. B produces something close to `exact_dup_existing_count` |
+| 2 | What does the live distribution actually look like | A read-only count of `times_derived` values would show whether anything above 1 survives from before the admission rewrite. Not yet run |
 
 ## Touch points
 

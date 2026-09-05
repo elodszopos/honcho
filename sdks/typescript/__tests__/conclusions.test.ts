@@ -427,6 +427,7 @@ describe('Conclusions', () => {
         observer_id: 'observer',
         observed_id: 'observed',
         session_id: 'session',
+        times_derived: 7,
         created_at: '2024-01-15T10:00:00Z',
       }
 
@@ -437,7 +438,21 @@ describe('Conclusions', () => {
       expect(conclusion.observerId).toBe('observer')
       expect(conclusion.observedId).toBe('observed')
       expect(conclusion.sessionId).toBe('session')
+      expect(conclusion.timesDerived).toBe(7)
       expect(conclusion.createdAt).toBe('2024-01-15T10:00:00Z')
+    })
+
+    test('fromApiResponse defaults timesDerived when the server omits it', () => {
+      const conclusion = Conclusion.fromApiResponse({
+        id: 'test-id',
+        content: 'Test content',
+        observer_id: 'observer',
+        observed_id: 'observed',
+        session_id: 'session',
+        created_at: '2024-01-15T10:00:00Z',
+      })
+
+      expect(conclusion.timesDerived).toBe(1)
     })
 
     test('toString returns readable format', async () => {

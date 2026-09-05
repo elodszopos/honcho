@@ -38,6 +38,7 @@ export function register(server: McpServer, ctx: ToolContext) {
             observer_id: c.observerId,
             observed_id: c.observedId,
             session_id: c.sessionId,
+            times_derived: c.timesDerived,
             created_at: c.createdAt,
           })),
           total: page.total,
@@ -88,6 +89,7 @@ export function register(server: McpServer, ctx: ToolContext) {
             observer_id: c.observerId,
             observed_id: c.observedId,
             session_id: c.sessionId,
+            times_derived: c.timesDerived,
             created_at: c.createdAt,
           })),
         );
