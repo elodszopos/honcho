@@ -41,17 +41,19 @@ One entry, one verdict: what the fork does, why upstream's version loses.
   `tests/test_fork_held_values.py`.
 - The four dedup counters on `RepresentationCompletedEvent`. They keep their schema default
   because the admission path produces none of them.
-- Upstream's tests that patch `crud.create_documents` and the summed-dedup-counts test. They
-  exercise a function no production path reaches.
+- Upstream's tests that patch `crud.create_documents` — the summed-dedup-counts test, the
+  batch-embed fallback pair, and the `DERIVER_DEDUPLICATE` forwarding pair. They exercise a
+  function no production path reaches.
+- Per-observation embedding inside `agent_tools.create_observations`. The admission path lets
+  `crud.create_observations` embed, so upstream's batch-with-single-item-fallback belongs to
+  the write path this fork does not use.
 
 ## Standing verdicts for the rest of this pull
 
-`v3.1.0` brings the dialectic prompt rewrite (`ac67017a`), the workspace chat prompt
-(`c73f6a0b`) and a `crud.get_peer` signature change (`81d8409b`); the tip brings `a5fa8c39`
-and `9677f3d8`. Take upstream's tool rendering, its workspace prompt and its summary-dropped
-log wholesale. Take only the glossary from its new pair-prompt opening — the ROLE/CONSUMER
-header, the writing contract and the fenced examples stay. Retire this section when the last
-slice lands.
+The tip brings `a5fa8c39` (NO CLARIFYING QUESTIONS on the workspace prompt — adopt, and port
+the fuller DIALECTIC OUTPUT block onto it) and `9677f3d8` (an info log when a summary exists
+but exceeds its budget — adopt; ours leaves that case silent). Retire this section when the
+last slice lands.
 
 ## Values set against upstream's
 

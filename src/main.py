@@ -17,13 +17,19 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from src._version import HONCHO_VERSION
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.db import engine, register_db_query_instrumentation, request_context
+from src.db import (
+    engine,
+    register_db_connection_instrumentation,
+    register_db_query_instrumentation,
+    request_context,
+)
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
     keys,
     messages,
     peers,
+    scopes,
     sessions,
     webhooks,
     workspaces,
@@ -108,6 +114,13 @@ async def lifespan(_: FastAPI):
     # Expose DB connection-pool stats for this API instance (no-op if metrics off)
     register_db_pool_collector("api")
     register_db_query_instrumentation("api")
+    register_db_connection_instrumentation("api")
+
+    # region ai
+    # Zero-init bounded-label counters so a missing series signals a broken scrape,
+    # not "no events" — see initialize_bounded_metrics. No-op if metrics off.
+    # endregion
+    prometheus_metrics.initialize_bounded_metrics(instance_type="api")
 
     # Validate embedding schema before serving any traffic. Fails closed: if
     # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical
@@ -171,6 +184,7 @@ add_pagination(app)
 app.include_router(workspaces.router, prefix="/v3")
 app.include_router(peers.router, prefix="/v3")
 app.include_router(sessions.router, prefix="/v3")
+app.include_router(scopes.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")

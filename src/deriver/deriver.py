@@ -10,6 +10,7 @@ from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
+from src.exceptions import RepresentationSaveError
 from src.llm import honcho_llm_call
 from src.llm.types import LLMTelemetryContext
 from src.models import Message
@@ -276,6 +277,7 @@ async def process_representation_tasks_batch(
     successful_observer_count = 0
     admission_response = None
     admission_llm_duration = 0.0
+    save_errors: list[tuple[str, Exception]] = []
 
     if not response.content.explicit or not message_ids:
         logger.warning(
@@ -436,13 +438,20 @@ async def process_representation_tasks_batch(
 
         # Persist each observer's complete candidate set in one transactional call.
         for observer, admitted in admitted_by_observer.items():
-            saved = await managers[observer].save_representation(
-                admitted,
-                message_ids,
-                latest_message.session_name,
-                latest_message.created_at,
-                message_level_configuration,
-            )
+            try:
+                saved = await managers[observer].save_representation(
+                    admitted,
+                    message_ids,
+                    latest_message.session_name,
+                    latest_message.created_at,
+                    message_level_configuration,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.exception(
+                    "Failed to save representation for observer %s", observer
+                )
+                save_errors.append((observer, e))
+                continue
             if saved:
                 successful_observer_count += 1
                 observations.explicit.extend(admitted.explicit)
@@ -587,5 +596,16 @@ async def process_representation_tasks_batch(
             # default because the admission path never dedups. Plan B in
             # PLAN-reinforcement.md would give exact_dup_existing_count a real value.
             observer_count=successful_observer_count,
+            failed_observer_count=len(save_errors),
         )
     )
+
+    if save_errors and successful_observer_count == 0:
+        details = "; ".join(
+            f"{observer}: {exc.__class__.__name__}: {exc}"
+            for observer, exc in save_errors
+        )
+        raise RepresentationSaveError(
+            f"save_representation failed for all {len(save_errors)} observer(s): "
+            + details
+        ) from save_errors[0][1]

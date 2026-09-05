@@ -10,9 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 import pytest_asyncio
-from cashews.backends.interface import ControlMixin
 from cashews.picklers import PicklerType
-from fakeredis import FakeAsyncRedis
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -88,6 +86,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
+    # Session-scope SQL shape — asserts on compiled statements, never executes one.
+    "tests/crud/test_session_scope_clauses.py",
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
@@ -385,54 +385,32 @@ async def db_session(db_engine: AsyncEngine):
 
 @pytest_asyncio.fixture(scope="session")
 async def fake_cache_session():
-    """Set up fakeredis for caching once per test session."""
+    """Set up a taskless in-memory cache once per test session.
+
+    Cashews' normal memory backend starts a periodic expiry task on whichever
+    event loop first uses it. Tests use both pytest-asyncio loops and TestClient
+    portal loops, so that task can be cancelled when its originating loop closes
+    and then leak a CancelledError into the next app startup. Disabling the
+    periodic sweep keeps the backend loop-agnostic; expired entries are still
+    discarded lazily when read.
+    """
     # Store original settings
     original_enabled = settings.CACHE.ENABLED
     original_url = settings.CACHE.URL
 
-    # Create a fake redis instance that persists for the session
-    fake_redis = FakeAsyncRedis(decode_responses=True)
-
-    # Patch redis creation to use fakeredis
-    # Cashews uses redis.asyncio.from_url to create connections
-    def fake_redis_from_url(*_args: Any, **_kwargs: Any):
-        return fake_redis
-
-    # Patch the cashews backend's _disable property to avoid ContextVar issues
-    # This works around cashews' ContextVar not being properly initialized in TestClient context
-
-    original_disable_property = ControlMixin._disable  # pyright: ignore[reportPrivateUsage]
-
-    @property  # type: ignore
-    def patched_disable_property(self):  # pyright: ignore
-        try:
-            return original_disable_property.fget(self)  # pyright: ignore[reportOptionalCall]
-        except LookupError:
-            # Return empty set as default if ContextVar not set in current context
-            return set()  # pyright: ignore
-
-    # Start patching
-    redis_patch = patch("redis.asyncio.from_url", fake_redis_from_url)
-    redis_patch.start()
-    ControlMixin._disable = patched_disable_property  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
-
     try:
-        # Enable caching and set URL for tests
+        # Use the same backend from pytest-asyncio and TestClient event loops.
         settings.CACHE.ENABLED = True
-        settings.CACHE.URL = "redis://fake-redis:6379/0"
-
-        # Setup cache for tests that don't use TestClient (direct CRUD tests)
-        # For TestClient tests, the app's lifespan handler will also call cache.setup()
-        # The ContextVar patch above handles any context issues
+        settings.CACHE.URL = "mem://?check_interval=0"
         cache.setup(
-            "redis://fake-redis:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True
+            settings.CACHE.URL,
+            pickle_type=PicklerType.SQLALCHEMY,
+            enable=True,
         )
 
-        yield fake_redis
+        yield cache
     finally:
-        # Stop the patches
-        redis_patch.stop()
-        ControlMixin._disable = original_disable_property  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        await cache.close()
 
         # Restore original settings
         settings.CACHE.ENABLED = original_enabled
@@ -440,21 +418,21 @@ async def fake_cache_session():
 
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
-async def fake_cache(fake_cache_session: FakeAsyncRedis):
+async def fake_cache(fake_cache_session: Any):  # pyright: ignore[reportUnusedParameter]
     """Clear cache between tests."""
     # Clear cache before each test
-    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+    await cache.clear()
 
     yield cache
 
     # Clear cache after each test
-    await fake_cache_session.flushall()  # pyright: ignore[reportUnknownMemberType]
+    await cache.clear()
 
 
 @pytest.fixture(scope="function")
 async def client(
     db_session: AsyncSession,
-    fake_cache_session: FakeAsyncRedis,  # pyright: ignore[reportUnusedParameter]
+    fake_cache_session: Any,  # pyright: ignore[reportUnusedParameter]
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[TestClient, Any]:
     """Create a FastAPI TestClient for the scope of a single test function"""
@@ -628,7 +606,9 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
 
         mock_embed.side_effect = embed_side_effect
 
-        async def mock_simple_batch_embed_func(texts: list[str]) -> list[list[float]]:
+        async def mock_simple_batch_embed_func(
+            texts: list[str], **_kwargs: object
+        ) -> list[list[float]]:
             return [_content_to_embedding(text) for text in texts]
 
         mock_simple_batch_embed.side_effect = mock_simple_batch_embed_func
@@ -791,6 +771,12 @@ def mock_llm_call_functions(request: pytest.FixtureRequest):
         patch(
             "src.routers.peers.agentic_chat_stream", side_effect=mock_stream
         ) as mock_agentic_chat_stream,
+        patch(
+            "src.routers.workspaces.workspace_chat", new_callable=AsyncMock
+        ) as mock_workspace_chat,
+        patch(
+            "src.routers.workspaces.workspace_chat_stream", side_effect=mock_stream
+        ) as mock_workspace_chat_stream,
     ):
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
@@ -806,11 +792,20 @@ def mock_llm_call_functions(request: pytest.FixtureRequest):
 
         mock_agentic_chat.side_effect = _agentic_chat_response
 
+        async def _workspace_chat_response(*_args: object, **kwargs: object) -> str:
+            if kwargs.get("response_model") is not None:
+                return "{}"
+            return "Test workspace chat response"
+
+        mock_workspace_chat.side_effect = _workspace_chat_response
+
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "agentic_chat": mock_agentic_chat,
             "agentic_chat_stream": mock_agentic_chat_stream,
+            "workspace_chat": mock_workspace_chat,
+            "workspace_chat_stream": mock_workspace_chat_stream,
         }
 
 
@@ -957,6 +952,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.deriver.consumer.tracked_db",
         "src.deriver.enqueue.tracked_db",
         "src.routers.peers.tracked_db",
+        "src.routers.workspaces.tracked_db",
         "src.crud.representation.tracked_db",
         "src.dreamer.orchestrator.tracked_db",
         "src.dreamer.dream_scheduler.tracked_db",
@@ -973,6 +969,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
+        "src.deriver.scope_backfill.tracked_db",
     ]
     with ExitStack() as stack:
         for target in tracked_db_targets:
