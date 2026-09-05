@@ -43,7 +43,7 @@ a merge would revert.
 | Value | Ours | Upstream's |
 |---|---|---|
 | `DERIVER.WORK_UNIT_TIMEOUT_SECONDS` | 300 | key does not exist |
-| `DERIVER.DEDUPLICATE_MAX_DISTANCE` | 0.05, configurable | 0.05, hardcoded at the call site |
+| `DERIVER.DEDUPLICATE_MAX_DISTANCE` | 0.05, configurable — inert, see caveats | 0.05, hardcoded at the call site |
 | `DERIVER.MAX_OBSERVATIONS_PER_SESSION` | 0, off | key does not exist |
 | `MAX_CONCLUSION_CHARS` / `CONCLUSION_TARGET_CHARS` | 800 / 500 | 65535, storage ceiling only |
 | SDK version | 2.3.1, the version Hermes pins | upstream's own release cadence |
@@ -100,6 +100,10 @@ a merge would revert.
   all match the `python:3.13-slim` containers and the agent's own interpreter, adopted
   ahead of the merge rather than during it. The suite passes on 3.13 unchanged, so
   upstream's own move to that floor is already reconciled and needs no verdict.
+- `create_documents` and `is_rejected_duplicate` have no production caller; every write enters
+  through `create_observations`. Their conflicts resolve toward upstream at no behavioural cost.
+  `DERIVER.DEDUPLICATE_MAX_DISTANCE` is read only there, so its assertion guards the declaration
+  and not behaviour.
 - Prompt and instruction text is behavioural and security surface. An upstream edit to any
   prompt this fork rewrote gets read and given a verdict, never merged on the diff alone.
 
