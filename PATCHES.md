@@ -96,6 +96,10 @@ a merge would revert.
 - A representation work unit under `REPRESENTATION_BATCH_MAX_TOKENS` waits for the
   `REPRESENTATION_BATCH_MAX_AGE_SECONDS` flush, which is why anything asserting on
   derivation must exceed the token threshold rather than poll briefly.
+- Python 3.13 everywhere: `.python-version`, `requires-python` and the project environment
+  all match the `python:3.13-slim` containers and the agent's own interpreter, adopted
+  ahead of the merge rather than during it. The suite passes on 3.13 unchanged, so
+  upstream's own move to that floor is already reconciled and needs no verdict.
 - Prompt and instruction text is behavioural and security surface. An upstream edit to any
   prompt this fork rewrote gets read and given a verdict, never merged on the diff alone.
 
