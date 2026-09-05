@@ -619,9 +619,8 @@ class Representation(BaseModel):
         if self.explicit:
             parts.append("## Explicit Observations\n")
             for obs in self.explicit:
-                # Don't need IDs for explicit as these are the lowest level of reasoning.
-                # id_prefix = f"[id:{obs.id}] " if include_ids and obs.id else ""
-                parts.append(f"{obs}")
+                # The admission agent picks an enrich target from this block by id.
+                parts.append(obs.str_with_id() if include_ids else f"{obs}")
             parts.append("")
 
         # Add deductive observations

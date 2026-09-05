@@ -93,6 +93,21 @@ class QueueBatchResult:
     batch_max_tokens: int = 0
 
 
+_UNBOUNDED_TASK_TYPES = frozenset(
+    {"dream", "deletion", "scope_backfill", "scope_removal"}
+)
+_UNBOUNDED_TASK_TIMEOUT_MULTIPLIER = 6
+
+
+def _work_unit_timeout(task_type: str) -> int:
+    # A dream is up to 22 agent tool rounds and deletion/backfill are unbounded DB
+    # work; the representation bound cancels them mid-flight and the retry re-spends.
+    base = settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS
+    if task_type in _UNBOUNDED_TASK_TYPES:
+        return base * _UNBOUNDED_TASK_TIMEOUT_MULTIPLIER
+    return base
+
+
 def _detach_queue_batch_objects(
     db: AsyncSession,
     messages_context: list[models.Message],
@@ -603,10 +618,10 @@ class QueueManager:
         The attempt count lives on the oldest unprocessed queue item so a
         different deriver instance continues the same budget after reclaim.
         Reprocessing is at-least-once, not idempotent: the batch is re-derived
-        by a fresh LLM call, so identical text collapses via exact dedup and
-        near-identical text via semantic dedup. Retries can therefore inflate
-        times_derived and double-count LLM telemetry -- acceptable because the
-        alternative is dropping the batch.
+        by a fresh LLM call, and only the admission pass searching before it
+        writes stands between a retry and a duplicate -- a judgement, not a
+        guarantee. Retries can therefore duplicate a conclusion and double-count
+        LLM telemetry -- acceptable because the alternative is dropping the batch.
 
         Terminal errors mark only the first queue item as errored so we don't
         potentially throw away a batch. This allows us to incrementally attempt
@@ -778,9 +793,8 @@ class QueueManager:
                                 break
 
                             try:
-                                # Same bound as the representation path -- covers
-                                # summary/dream/webhook task types.
                                 item_started = time.perf_counter()
+                                item_timeout = _work_unit_timeout(work_unit.task_type)
                                 logger.info(
                                     "deriver.work_unit item start: worker=%s work_unit=%s task_type=%s queue_item=%s message_id=%s timeout=%s",
                                     worker_id,
@@ -788,11 +802,11 @@ class QueueManager:
                                     work_unit.task_type,
                                     queue_item.id,
                                     queue_item.message_id,
-                                    settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS,
+                                    item_timeout,
                                 )
                                 await asyncio.wait_for(
                                     process_item(queue_item),
-                                    timeout=settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS,
+                                    timeout=item_timeout,
                                 )
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key

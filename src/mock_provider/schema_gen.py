@@ -3,7 +3,7 @@
 The deriver is a structured-output caller: it sends a schema and parses the
 reply back into a Pydantic model. A mock that answers with prose does not fail
 loudly — ``repair_response_model_json`` swallows the error and hands back an
-empty ``PromptRepresentation``, which reads as "the deriver found nothing"
+empty ``ExtractedRepresentation``, which reads as "the deriver found nothing"
 rather than "the mock is wrong". So generation is driven by the schema that was
 actually sent, ``$ref`` indirection and all.
 

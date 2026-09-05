@@ -248,7 +248,6 @@ def _uses_pgvector() -> bool:
 
 
 # Shared by is_rejected_duplicate and create_documents candidate resolution.
-_SEMANTIC_DUP_MAX_DISTANCE = 0.05
 _SEMANTIC_DUP_TOP_K = 1
 _SEMANTIC_CANDIDATE_CONCURRENCY = 8
 

@@ -1,6 +1,7 @@
 """Values this fork holds. Upstream rewrites its own tests on every pull, so a merge that
 adopts upstream's value goes green unless the literal is asserted here."""
 
+import datetime
 import json
 import tomllib
 from pathlib import Path
@@ -17,6 +18,7 @@ from src.deriver import queue_manager
 from src.deriver.prompts import minimal_deriver_prompt
 from src.llm import registry as llm_registry
 from src.llm.api import is_transient_llm_error
+from src.utils import agent_tools
 from src.utils import representation as representation_module
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -55,8 +57,14 @@ def test_dedup_distance_is_a_setting_and_not_a_literal():
     assert _deriver_default("DEDUPLICATE_MAX_DISTANCE") == 0.05
 
     source = Path(crud_document.__file__).read_text()
-    assert "max_distance=settings.DERIVER.DEDUPLICATE_MAX_DISTANCE" in source
-    assert "max_distance=0.05" not in source
+    assert source.count("max_distance=settings.DERIVER.DEDUPLICATE_MAX_DISTANCE") == 2
+    assert "_SEMANTIC_DUP_MAX_DISTANCE" not in source
+
+
+def test_semantic_dedup_stays_unwired_from_every_write_path():
+    for module in (crud_document, crud_representation, agent_tools):
+        source = Path(module.__file__).read_text()
+        assert "deduplicate=settings.DERIVER.DEDUPLICATE" not in source
 
 
 def test_session_observation_cap_defaults_off_and_is_read():
@@ -141,6 +149,24 @@ def test_a_representation_save_returns_a_count_so_an_empty_save_is_falsy():
     assert hints["return"] is int
 
 
+def test_the_admission_block_names_the_id_of_every_explicit_conclusion():
+    representation = representation_module.Representation(
+        explicit=[
+            representation_module.ExplicitObservation(
+                id="conclusion-1",
+                content="the user keeps bees",
+                created_at=datetime.datetime.now(datetime.UTC),
+                message_ids=[1],
+                session_name="session",
+            )
+        ]
+    )
+
+    rendered = representation.format_as_markdown(include_ids=True)
+
+    assert "[id:conclusion-1]" in rendered
+
+
 def test_the_two_representation_models_are_the_only_response_shapes():
     assert hasattr(representation_module, "ExtractedRepresentation")
     assert hasattr(representation_module, "AdmissionRepresentation")
@@ -175,3 +201,4 @@ def test_both_sdks_declare_the_same_version():
     )
 
     assert python_sdk["project"]["version"] == typescript_sdk["version"]
+    assert python_sdk["project"]["version"] == "2.3.1"

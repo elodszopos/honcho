@@ -281,8 +281,8 @@ async def process_representation_tasks_batch(
     save_errors: list[tuple[str, Exception]] = []
 
     if not response.content.explicit or not message_ids:
-        logger.warning(
-            "Deriver generated zero admission candidates for messages %s:%s in %s/%s!",
+        logger.info(
+            "Deriver generated zero admission candidates for messages %s:%s in %s/%s",
             earliest_message.id,
             latest_message.id,
             latest_message.workspace_name,

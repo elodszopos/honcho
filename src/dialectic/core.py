@@ -582,7 +582,7 @@ class DialecticAgent:
             max_tokens,
             settings.DIALECTIC.MAX_INPUT_TOKENS,
             level_settings.MAX_TOOL_ITERATIONS,
-            level_settings.TOOL_CHOICE,
+            self._tool_choice(level_settings),
             len(tools),
             len(self.messages),
             _message_chars(self.messages),

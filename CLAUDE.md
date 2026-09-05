@@ -180,7 +180,7 @@ Honcho uses several specialized LLM agents. They share tool definitions and the 
 
 **Role**: Memory formation through content ingestion.
 
-The Deriver processes batches of incoming messages and extracts conclusions about peers. The current architecture is "minimal deriver" — a **single LLM call** per batch using structured output, not an agentic tool loop. This trades flexibility for cost and predictability.
+The Deriver processes batches of incoming messages and extracts conclusions about peers. The current architecture is "minimal deriver" — structured output rather than an agentic tool loop. Upstream makes one LLM call per batch; this fork adds a second, the admission pass, on any batch that extracts candidates. This trades flexibility for cost and predictability.
 
 - **Trigger**: Messages enqueued by `src/deriver/enqueue.py` on message create; consumed by `src/deriver/queue_manager.py` → `consumer.process_item()` → `deriver.process_representation_tasks_batch()`.
 - **Output**: Explicit conclusions (direct facts) and deductive conclusions (inferences) saved to `(observer, observed)` collections.
@@ -325,7 +325,7 @@ src/
 1. **Peer Paradigm**: humans and AI agents are unified as "Peers"; many-to-many with Sessions. Internal vector storage (Collections/Documents) is keyed by `(observer, observed)` peer pairs — the same mechanism powers self-representation (`observer == observed`) and cross-peer modeling.
 2. **Multi-Peer Sessions**: Sessions can have multiple participants with different observation settings.
 3. **API server / worker split**: API enqueues, deriver worker process consumes. Never block HTTP on LLM work. The Reconciler runs as an in-process scheduler inside the deriver, handling async embedding sync and queue cleanup.
-4. **"Minimal" deriver**: memory formation is a single structured-output LLM call per batch, not an agentic tool loop. Predictable cost, lower latency. The Dialectic is the one true tool-using agent.
+4. **"Minimal" deriver**: memory formation is structured output rather than an agentic tool loop — one call to extract, and in this fork a second to admit. Predictable cost, lower latency. The Dialectic is the one true tool-using agent.
 5. **Provider-agnostic LLM layer** (`src/llm/`): all model calls go through `honcho_llm_call()`. Backends (`anthropic`, `gemini`, `openai`) sit behind a registry; per-agent `MODEL_CONFIG` with fallback chains is resolved at call time.
 6. **Dialectic reasoning tiers**: 5 levels (`minimal` → `max`); each level has its own model config and tool set (`minimal` uses a reduced toolset).
 7. **Hybrid search**: Postgres FTS (GIN index on `to_tsvector('english', content)`) + vector similarity (HNSW on `MessageEmbedding.embedding`). `MessageEmbedding` is a separate table from `Message` with its own `sync_state` so embedding is decoupled from message creation.

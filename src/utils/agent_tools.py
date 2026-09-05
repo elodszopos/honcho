@@ -1063,15 +1063,6 @@ async def create_observations(
         logger.info("No non-empty observations to create")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
-    # Ensure collection exists (short DB scope)
-    async with tracked_db("create_observations.collection") as db:
-        await crud.get_or_create_collection(
-            db,
-            workspace_name,
-            observer=observer,
-            observed=observed,
-        )
-
     admitted = [
         schemas.ConclusionCreate(
             content=obs.content,
@@ -1098,18 +1089,24 @@ async def create_observations(
         for obs in normalized_observations
     ]
 
+    # Embed before opening the session: never hold a connection across an external call.
     with embedding_call_purpose(
         EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
         workspace_name=workspace_name,
         run_id=run_id,
         parent_category=parent_category,
     ):
-        async with tracked_db("create_observations.admit") as db:
-            created = await crud.create_observations(
-                db,
-                workspace_name=workspace_name,
-                observations=admitted,
-            )
+        embeddings = await embedding_client.simple_batch_embed(
+            [obs.content for obs in admitted], on_oversize="truncate"
+        )
+
+    async with tracked_db("create_observations.admit") as db:
+        created = await crud.create_observations(
+            db,
+            workspace_name=workspace_name,
+            observations=admitted,
+            embeddings=embeddings,
+        )
 
     logger.info(
         "Admitted %d observations in %s/%s/%s",

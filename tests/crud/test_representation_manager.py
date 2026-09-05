@@ -8,7 +8,6 @@ from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.crud.document import CreateDocumentsResult
 from src.crud.representation import RepresentationManager
 from src.schemas.configuration import (
     ResolvedConfiguration,
@@ -507,7 +506,7 @@ class TestRepresentationManagerSave:
                 manager,
                 "_save_representation_internal",
                 new=AsyncMock(
-                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                    return_value=1
                 ),
             ) as mock_save,
         ):
@@ -519,7 +518,7 @@ class TestRepresentationManagerSave:
                 message_level_configuration=_resolved_config(),
             )
 
-        assert len(saved.created_documents) == 1
+        assert saved == 1
         mock_embed.assert_awaited_once_with(
             ["useful observation"], on_oversize="truncate"
         )
@@ -565,7 +564,7 @@ class TestRepresentationManagerSave:
                 manager,
                 "_save_representation_internal",
                 new=AsyncMock(
-                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                    return_value=1
                 ),
             ) as mock_save,
         ):
@@ -577,7 +576,7 @@ class TestRepresentationManagerSave:
                 message_level_configuration=_resolved_config(),
             )
 
-        assert len(saved.created_documents) == 1
+        assert saved == 1
         mock_embed.assert_awaited_once_with(
             ["inferred conclusion"], on_oversize="truncate"
         )
@@ -674,7 +673,7 @@ class TestRepresentationManagerSave:
                 manager,
                 "_save_representation_internal",
                 new=AsyncMock(
-                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                    return_value=1
                 ),
             ) as mock_save,
         ):

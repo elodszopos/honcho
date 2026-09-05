@@ -722,6 +722,7 @@ class ConclusionCreate(BaseModel):
     agent_model: str = Field(min_length=1)
     times_derived: int | None = Field(
         default=None,
+        ge=1,
         description="Reinforcement count to carry onto the admitted conclusion.",
     )
     source_ids: list[str] = Field(

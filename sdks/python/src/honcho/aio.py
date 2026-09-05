@@ -79,7 +79,6 @@ if TYPE_CHECKING:
     from .client import Honcho
     from .conclusions import ConclusionsView
 
-from .conclusions import ConclusionCreateParams
 from .peer import Peer, TResponseFormat, serialize_response_format
 from .scope import Scope
 from .session import Session

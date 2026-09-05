@@ -38,13 +38,13 @@ supplying it is not an optimisation; omitting it is data loss.
 | Finding | Evidence |
 |---|---|
 | Upstream's three dedup mechanisms all live inside `create_documents` | exact-in-batch, exact-vs-existing (reinforces), semantic via `is_rejected_duplicate` |
-| None of them run | `create_documents` has no production caller; `is_rejected_duplicate` is reached only from inside it. Verified before and after the merge |
+| None of them run | `create_documents` has no production caller, and `is_rejected_duplicate` now has none either — both it and `create_documents` call `_semantic_dup_decision`, which nothing else reaches |
 | Two config keys are inert | `DERIVER.DEDUPLICATE` and `DERIVER.DEDUPLICATE_MAX_DISTANCE`; no `deduplicate=` call site exists in `src/` |
 | The deriver never supplies a count | neither `agent_tools.py` nor `crud/representation.py` sets `times_derived` on a write |
 | Enrichment destroys the count | `create_observations` writes `times_derived=obs.times_derived or 1`; the predecessor's value reaches `admission_history` and stops there |
 | The synthesist carries what it is handed | `jobs/synthesist.md` passes MAX of merged sources, and those values are real; nothing replenishes them |
 | The janitor cannot preserve it at all | its tools are create plus soft-delete, so absorbed duplicates take their counts with them |
-| Consumers are live, not decorative | `get_most_derived_observations` in `DREAMER_TOOLS`; `_query_documents_most_derived` inside `get_working_representation` |
+| One consumer is live | `_query_documents_most_derived`, reached from `_get_working_representation_internal` when a caller passes `include_most_frequent=True` (peer and session routes). `get_most_derived_observations` sits only in `DREAMER_TOOLS`, which no loadout references — upstream dead code, not a fork regression |
 
 ## Design
 
@@ -77,7 +77,7 @@ it, and the MCP list and query tools include it in their output.
 
 `jobs/synthesist.md` instructs the synthesist to fold into the more-reinforced conclusion by
 reading `times_derived` from the injected pool listing. That worked only because
-`scripts/steward/shared.py` falls back to querying Postgres directly when the SDK omits the
+`~/.hermes/scripts/steward/shared.py` falls back to querying Postgres directly when the SDK omits the
 field. The read path now supplies it, so that fallback short-circuits on its own and every
 other consumer — the MCP tools, the TypeScript SDK, the agent's conclusion tool — gets the
 value without a database connection of its own.
@@ -114,6 +114,22 @@ The backfill ruling stands — rows keep the values they have, and nothing is re
 | B | `src/crud/document.py` (`create_observations`, create branch) |
 | C | `src/schemas/api.py` (`action` literal), `src/crud/document.py`, `mcp/src/tools/conclusions.ts`, `sdks/python/src/honcho/conclusions.py`, `sdks/typescript/src/conclusions.ts` |
 | Doctrine | `~/.hermes/skills/productivity/memory-honcho-steward/jobs/janitor.md`, `jobs/synthesist.md` |
+
+## Raised by review, parked until the plan is executed
+
+None of these is load-bearing. Each was found in the post-merge review and judged not worth
+doing now; bring them up once A, B and C have landed.
+
+| Item | Why it waits |
+|---|---|
+| `internal_metadata["message_created_at"]` has six readers and no writer, so conclusion timestamps fall back to row-insert time and the dreamer's backdating never fires | Writing it means a new field on `ConclusionCreate` and its SDK ripple. Insert time tracks message time closely on a live deriver, so the visible error is small |
+| `_latest_source_timestamp` runs a full document query on every dreamer write and always returns `None`, because of the above | Same fix, same cost. It is a wasted round-trip, not a wrong answer |
+| A dreamer that deletes a searched candidate before writing loses the whole batch — `_validate_admission_references` requires every searched id to still be live | Needs a specific search-delete-write order in one run. Fix is to check liveness for `target_id` only, which is what the concurrency guard actually needs |
+| `DREAMER_TOOLS` is defined and referenced nowhere | Upstream dead code. Either wire it into a loadout the dreamer uses or drop it; both are upstream's call more than ours |
+| `ConclusionCreateParams` is defined a second time in each SDK's `api_types` with every admission field optional | Dormant — neither copy is exported or used. It documents a wire contract the server rejects |
+| Two admission cases targeting the same `target_id` report "Enrichment target changed during admission", which is not what happened | The store fail-closes correctly; only the message misleads |
+| `create_observations` filters blank content after the schema has already rejected it | Unreachable defensive code. The schema-level guarantee is tested |
+| `track_deriver_input_tokens` counts the extraction call only, so `deriver_tokens_processed` understates input by roughly the admission call on any extracting batch | `DeriverComponents` has no bucket for it, and adding one means editing upstream's bounded-label init. Attempted and reverted: folding it into `PROMPT` inflates the scaffold metric, which a test correctly caught |
 
 ## Out of scope
 

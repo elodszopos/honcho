@@ -699,7 +699,7 @@ class InductionSpecialist(BaseSpecialist):
         _ = observed
         _ = peer_card_enabled
         return (
-            """You are an inductive reasoning agent identifying patterns about the target observee.
+            f"""You are an inductive reasoning agent identifying patterns about the target observee.
 
 ## YOUR JOB
 

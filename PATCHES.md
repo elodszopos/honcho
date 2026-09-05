@@ -25,7 +25,7 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 | Fork branch | `hermes` |
 | Fork point | `be543555` — upstream's tip; the backlog is closed |
 | Last upstream merge | tip, 2026-09-06 |
-| Carried surface | 73 files, +4,745 / -1,464 (2026-09-06) |
+| Carried surface | 73 files, +4,770 / -1,464 against `be543555`, measured after the commit that records it |
 | Collides with upstream | nothing ahead yet; the next pull's manifest comes from the gap report |
 | Schema | unchanged; `migrations/` is byte-identical from the fork point through upstream's tip |
 
@@ -50,16 +50,17 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 
 ## Values set against upstream's
 
-Each is asserted in `tests/test_fork_held_values.py` against the **declared** default in
-`src/config.py`, not the resolved runtime value — `.env` overrides say nothing about what
-a merge would revert.
+Each is asserted against the **declared** default, not the resolved runtime value — `.env`
+overrides say nothing about what a merge would revert. The assertion lives in
+`tests/test_fork_held_values.py` unless the row names another file.
 
 | Value | Ours | Upstream's |
 |---|---|---|
-| `DERIVER.WORK_UNIT_TIMEOUT_SECONDS` | 300 | key does not exist |
-| `DERIVER.DEDUPLICATE_MAX_DISTANCE` | 0.05, configurable — inert, see caveats | 0.05, hardcoded at the call site |
+| `DERIVER.WORK_UNIT_TIMEOUT_SECONDS` | 300, and six times that for dream, deletion and scope work | key does not exist |
+| `DERIVER.DEDUPLICATE` | never forwarded to a write path | `True`, forwarded from the deriver and the agent tools |
+| `DERIVER.DEDUPLICATE_MAX_DISTANCE` | 0.05, configurable — inert, see caveats | 0.05, a module constant |
 | `DERIVER.MAX_OBSERVATIONS_PER_SESSION` | 0, off | key does not exist |
-| `MAX_CONCLUSION_CHARS` / `CONCLUSION_TARGET_CHARS` | 800 / 500 | 65535, storage ceiling only |
+| `MAX_CONCLUSION_CHARS` / `CONCLUSION_TARGET_CHARS` | 800 / 500, declared in `src/writing_contract.py` and asserted in `tests/test_llm_writing_contract.py` | 65535, storage ceiling only |
 | SDK version | 2.3.1, the version Hermes pins | upstream's own release cadence |
 
 ## Non-obvious adaptations
@@ -104,20 +105,35 @@ a merge would revert.
 - `src/config.py` calls `load_dotenv(override=True)` at import, so `.env` beats the process
   environment regardless of the precedence its own settings sources declare.
   `PYTHON_DOTENV_DISABLED=1` turns it off.
-- The suite does not run from a host shell without three fixes; they live in
+- The suite does not run from a host shell without four corrections; they live in
   `~/.hermes/scripts/honcho-run-tests.sh`, which the daily gap job also uses so a hand run
-  and the recorded baseline cannot diverge. `CLAUDE.md` explains each.
-- A representation work unit under `REPRESENTATION_BATCH_MAX_TOKENS` waits for the
-  `REPRESENTATION_BATCH_MAX_AGE_SECONDS` flush, which is why anything asserting on
-  derivation must exceed the token threshold rather than poll briefly.
+  and the recorded baseline cannot diverge. Three are environment traps `CLAUDE.md` explains;
+  the fourth forces `DREAM_ENABLED=true`, because `.env` carries the deployment's `false` and
+  upstream's scope tests schedule dreams.
+- A representation work unit becomes claimable at
+  `REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS` and is then capped per LLM call by
+  `REPRESENTATION_BATCH_TARGET_INPUT_TOKENS`; below the first it waits for the
+  `REPRESENTATION_BATCH_MAX_AGE_SECONDS` flush. Anything asserting on derivation must exceed
+  the claim threshold rather than poll briefly.
+- The deriver makes two LLM calls on any turn that extracts — the extraction pass and the
+  admission pass — where upstream makes one. `CLAUDE.md`'s single-call description is
+  upstream's.
+- `mcp/package.json` points `@honcho-ai/sdk` at `file:../sdks/typescript` rather than a
+  published version, which is how the fork's conclusion fields reach the MCP tools. Its
+  typecheck reads `dist/`, so the SDK must be built first.
+- `src/routers/messages.py` widens upstream's enqueue payload with the message metadata, which
+  is how `is_seeded_memory_message` sees a local-memory seed block.
 - Python 3.13 everywhere: `.python-version`, `requires-python` and the project environment
   all match the `python:3.13-slim` containers and the agent's own interpreter, adopted
   ahead of the merge rather than during it. The suite passes on 3.13 unchanged, so
   upstream's own move to that floor is already reconciled and needs no verdict.
 - `create_documents` and `is_rejected_duplicate` have no production caller; every write enters
   through `create_observations`. Their conflicts resolve toward upstream at no behavioural cost.
-  `DERIVER.DEDUPLICATE_MAX_DISTANCE` is read only from `_semantic_dup_decision` beneath them, so
-  its assertion guards the declaration and not behaviour.
+  `DERIVER.DEDUPLICATE_MAX_DISTANCE` is read at both sites beneath them — the candidate resolve
+  in `create_documents` and the query in `_semantic_dup_decision` — so its assertion guards the
+  declaration and not behaviour. `DERIVER.DEDUPLICATE` reaches neither; restoring either
+  forwarding call re-enables threshold dedup on a live write path, which is why a test asserts
+  the forwarding stays absent.
 - Prompt and instruction text is behavioural and security surface. An upstream edit to any
   prompt this fork rewrote gets read and given a verdict, never merged on the diff alone.
 
