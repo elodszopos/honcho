@@ -127,6 +127,17 @@ def test_the_deriver_writes_about_the_user_not_a_spelled_peer_id():
     assert "elodszopos is" not in prompt
 
 
+def test_the_extraction_examples_are_fenced_and_disclaimed():
+    prompt = minimal_deriver_prompt("elodszopos", "USER: I took my dog out")
+
+    assert "Never emit a conclusion whose content comes from an example" in prompt
+    assert (
+        prompt.index("<examples>")
+        < prompt.index("Positive -- clears all four criteria:")
+        < prompt.index("</examples>")
+    )
+
+
 def test_both_sdks_declare_the_same_version():
     python_sdk = tomllib.loads(
         (REPO_ROOT / "sdks" / "python" / "pyproject.toml").read_text()

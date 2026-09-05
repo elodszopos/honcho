@@ -152,6 +152,9 @@ If a statement fails any single criterion, do not extract it. When uncertain whe
 
 Extract only what the messages support: never invent specifics, list items, or entities the peer did not state, and never let a general-knowledge leap add detail beyond a direct implication. Never infer a team, employer, or affiliation from workflow evidence, and never coin a named concept or mindset label the peer did not use themselves. State the plain fact, never a hedged guess -- an observation that needs "likely" or "probably" is not yet a fact; leave it out.
 
+<examples>
+These examples are fabricated illustrations of the criteria, not facts about the target peer. Never emit a conclusion whose content comes from an example. Every conclusion must be supported by the <messages> block only.
+
 EXAMPLES:
 
 Positive -- clears all four criteria:
@@ -180,6 +183,7 @@ Negative -- extract nothing, explicit: [] is the correct output:
 - "per the steward protocol, run search-before-create first" → explicit: [] (procedural/tooling content, not a fact about the user)
 - "remember this: I want summaries kept short" → EXPLICIT: "the user wants summaries kept short" (extract the preference itself -- NEVER "the user asked to have a preference recorded")
 - "the user balances agent responsiveness with data integrity" is NOT how to record "I like when things load fast but don't want to lose data" → EXPLICIT: "the user prefers fast loading but not at the cost of losing data" (plain form, not the pompous rewrite)
+</examples>
 
 OUTPUT DISCIPLINE: fewer, better observations beat many marginal ones. An empty extraction is a correct, common, and expected result -- never pad the output to justify the call.
 
