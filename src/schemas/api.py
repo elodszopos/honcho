@@ -31,6 +31,7 @@ from src.schemas.configuration import (
     SessionPeerConfig,
     WorkspaceConfiguration,
 )
+from src.utils.sanitization import NulStripped, strip_nul
 from src.utils.scopes import (
     SCOPE_PEER_PREFIX,
     is_scope_peer_name,
@@ -47,28 +48,6 @@ RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 _METADATA_MAX_KEYS = 100
 _METADATA_MAX_DEPTH = 5
-
-
-def _sanitize_value(v: Any) -> Any:
-    """Recursively strip NUL bytes from strings in nested data structures."""
-    if isinstance(v, str):
-        return v.replace("\x00", "")
-    if isinstance(v, dict):
-        d = cast(dict[str, Any], v)
-        return {_sanitize_value(k): _sanitize_value(val) for k, val in d.items()}
-    if isinstance(v, list):
-        lst = cast(list[Any], v)
-        return [_sanitize_value(item) for item in lst]
-    return v
-
-
-def _strip_nul(v: str) -> str:
-    """Strip NUL bytes from a string field (Postgres TEXT rejects \\x00)."""
-    return v.replace("\x00", "")
-
-
-# Reusable annotation for query fields; composes with a per-field Field(...).
-NulStripped = AfterValidator(_strip_nul)
 
 
 def _check_metadata_limits(
@@ -98,7 +77,7 @@ def _validate_metadata(v: Any) -> Any:
         return v
     data = cast(dict[str, Any], v)
     _check_metadata_limits(data)
-    return _sanitize_value(data)
+    return strip_nul(data)
 
 
 _SanitizedMetadata = Annotated[dict[str, Any], BeforeValidator(_validate_metadata)]
@@ -332,7 +311,7 @@ class PeerCardSet(BaseModel):
     def sanitize_peer_card(cls, v: Any) -> Any:
         if isinstance(v, list):
             return [
-                item.replace("\x00", "") if isinstance(item, str) else item
+                strip_nul(item) if isinstance(item, str) else item
                 for item in cast(list[Any], v)
             ]
         return v
@@ -359,7 +338,7 @@ class MessageCreate(MessageBase):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        return strip_nul(v)
 
     @property
     def encoded_message(self) -> list[int]:
@@ -769,7 +748,7 @@ class ConclusionCreate(BaseModel):
     )
     @classmethod
     def sanitize_required_text(cls, value: str) -> str:
-        cleaned = value.replace("\x00", "").strip()
+        cleaned = strip_nul(value).strip()
         if not cleaned:
             raise ValueError("value must contain non-whitespace text")
         return cleaned

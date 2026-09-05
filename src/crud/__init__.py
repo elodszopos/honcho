@@ -3,7 +3,11 @@ from .collection import (
     get_or_create_collection,
     update_collection_internal_metadata,
 )
-from .deriver import get_deriver_status, get_queue_status
+from .deriver import (
+    get_deriver_metrics,
+    get_deriver_status,
+    get_queue_status,
+)
 from .document import (
     CreateDocumentsResult,
     count_documents_for_session,
@@ -106,6 +110,7 @@ __all__ = [
     "get_or_create_collection",
     "update_collection_internal_metadata",
     # Deriver
+    "get_deriver_metrics",
     "get_deriver_status",
     "get_queue_status",
     # Document

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.schemas.api import MessageCreate
 from src.schemas.configuration import SessionPeerConfig
+from src.utils.sanitization import NulStripped, strip_nul
 from src.utils.types import DocumentLevel
 from src.writing_contract import MAX_CONCLUSION_CHARS
 
@@ -68,7 +69,7 @@ class DocumentMetadata(BaseModel):
 
 
 class DocumentCreate(DocumentBase):
-    content: Annotated[str, Field(min_length=1, max_length=100000)]
+    content: Annotated[str, Field(min_length=1, max_length=100000), NulStripped]
     session_name: str | None = Field(
         default=None,
         description="The session from which the document was derived (NULL for global observations)",
@@ -94,7 +95,9 @@ class DocumentCreate(DocumentBase):
 class ObservationInput(BaseModel):
     """Validated agent observation plus its search-backed admission decision."""
 
-    content: Annotated[str, Field(min_length=1, max_length=MAX_CONCLUSION_CHARS)]
+    content: Annotated[
+        str, Field(min_length=1, max_length=MAX_CONCLUSION_CHARS), NulStripped
+    ]
     level: DocumentLevel = "explicit"
     source_ids: list[str] = Field(default_factory=list)
     premises: list[str] = Field(default_factory=list)
@@ -113,7 +116,7 @@ class ObservationInput(BaseModel):
     @field_validator("content", "reason_for_entry", "search_query", mode="after")
     @classmethod
     def sanitize_required_text(cls, value: str) -> str:
-        cleaned = value.replace("\x00", "").strip()
+        cleaned = strip_nul(value).strip()
         if not cleaned:
             raise ValueError("value must contain non-whitespace text")
         return cleaned
@@ -178,6 +181,17 @@ class QueueCounts(BaseModel):
     in_progress: int
     pending: int
     sessions: dict[str, SessionCounts]
+
+
+class DeriverMetrics(BaseModel):
+    """Database-wide view of the deriver's outstanding work."""
+
+    eligible_work_units: int = 0
+    claimed_work_units: int = 0
+    pending_items: int = 0
+    oldest_pending_age_seconds: float = 0.0
+    embeddings_pending: int = 0
+    embeddings_pending_due: int = 0
 
 
 class QueueStatusRow(BaseModel):

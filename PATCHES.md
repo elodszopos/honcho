@@ -48,13 +48,6 @@ One entry, one verdict: what the fork does, why upstream's version loses.
   `crud.create_observations` embed, so upstream's batch-with-single-item-fallback belongs to
   the write path this fork does not use.
 
-## Standing verdicts for the rest of this pull
-
-The tip brings `a5fa8c39` (NO CLARIFYING QUESTIONS on the workspace prompt — adopt, and port
-the fuller DIALECTIC OUTPUT block onto it) and `9677f3d8` (an info log when a summary exists
-but exceeds its budget — adopt; ours leaves that case silent). Retire this section when the
-last slice lands.
-
 ## Values set against upstream's
 
 Each is asserted in `tests/test_fork_held_values.py` against the **declared** default in
@@ -123,8 +116,8 @@ a merge would revert.
   upstream's own move to that floor is already reconciled and needs no verdict.
 - `create_documents` and `is_rejected_duplicate` have no production caller; every write enters
   through `create_observations`. Their conflicts resolve toward upstream at no behavioural cost.
-  `DERIVER.DEDUPLICATE_MAX_DISTANCE` is read only there, so its assertion guards the declaration
-  and not behaviour.
+  `DERIVER.DEDUPLICATE_MAX_DISTANCE` is read only from `_semantic_dup_decision` beneath them, so
+  its assertion guards the declaration and not behaviour.
 - Prompt and instruction text is behavioural and security surface. An upstream edit to any
   prompt this fork rewrote gets read and given a verdict, never merged on the diff alone.
 
