@@ -4,12 +4,13 @@ adopts upstream's value goes green unless the literal is asserted here."""
 import json
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from src import schemas
-from src.config import settings
+from src.config import DeriverSettings
 from src.crud import document as crud_document
 from src.crud import representation as crud_representation
 from src.deriver import queue_manager
@@ -38,15 +39,20 @@ def _http_error(status: int, body: str) -> Exception:
     return error
 
 
+def _deriver_default(field: str) -> Any:
+    """The declared default, not the resolved value -- .env overrides say nothing about the fork."""
+    return DeriverSettings.model_fields[field].default
+
+
 def test_deriver_work_unit_timeout_is_held_and_read():
-    assert settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS == 300
+    assert _deriver_default("WORK_UNIT_TIMEOUT_SECONDS") == 300
 
     source = Path(queue_manager.__file__).read_text()
     assert "settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS" in source
 
 
-def test_dedup_distance_stays_configurable():
-    assert settings.DERIVER.DEDUPLICATE_MAX_DISTANCE is not None
+def test_dedup_distance_is_a_setting_and_not_a_literal():
+    assert _deriver_default("DEDUPLICATE_MAX_DISTANCE") == 0.05
 
     source = Path(crud_document.__file__).read_text()
     assert "max_distance=settings.DERIVER.DEDUPLICATE_MAX_DISTANCE" in source
@@ -54,7 +60,7 @@ def test_dedup_distance_stays_configurable():
 
 
 def test_session_observation_cap_defaults_off_and_is_read():
-    assert settings.DERIVER.MAX_OBSERVATIONS_PER_SESSION == 0
+    assert _deriver_default("MAX_OBSERVATIONS_PER_SESSION") == 0
 
     source = Path(crud_representation.__file__).read_text()
     assert "settings.DERIVER.MAX_OBSERVATIONS_PER_SESSION" in source
@@ -82,7 +88,7 @@ def test_conclusion_create_carries_reinforcement_and_provenance():
 
 
 def test_a_conclusion_cannot_be_written_without_an_admission():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="reason_for_entry"):
         schemas.ConclusionCreate(  # pyright: ignore[reportCallIssue]
             content="the user has a dog",
             observer_id="observer",
@@ -91,7 +97,7 @@ def test_a_conclusion_cannot_be_written_without_an_admission():
 
 
 def test_a_deriver_write_must_name_its_source_messages():
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="deriver_agent conclusions require source_message_ids"):
         schemas.ConclusionCreate(
             content="the user has a dog",
             observer_id="observer",

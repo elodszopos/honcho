@@ -106,8 +106,9 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 | Embedding width | `expected 1024 dimensions, not 1536` | Fixtures hardcode 1536-wide vectors (`tests/utils/test_agent_tools.py`); a deployment on another embedding model sets `EMBEDDING_VECTOR_DIMENSIONS` to its own width, and every test that writes an embedding then errors |
 
 `$HOME/.hermes/scripts/honcho-run-tests.sh` applies all three and passes its arguments
-through to pytest, so `honcho-run-tests.sh` runs the suite and
-`honcho-run-tests.sh tests/utils/test_agent_tools.py -q` runs one file. It is the same
+through to pytest: call it with no arguments for the whole suite, or
+`$HOME/.hermes/scripts/honcho-run-tests.sh tests/utils/test_agent_tools.py -q` for one
+file. It is the same
 runner the daily upstream-gap job uses, so a hand run and the recorded baseline cannot
 diverge.
 
