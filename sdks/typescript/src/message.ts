@@ -40,6 +40,8 @@ export class Message {
   readonly createdAt: string
   /** Number of tokens in this message */
   readonly tokenCount: number
+  /** The id conclusions cite in `source_message_ids`. A different id space from `id`. */
+  readonly internalId?: number
 
   constructor(
     id: string,
@@ -49,9 +51,11 @@ export class Message {
     workspaceId: string,
     metadata: Record<string, unknown>,
     createdAt: string,
-    tokenCount: number
+    tokenCount: number,
+    internalId?: number
   ) {
     this.id = id
+    this.internalId = internalId
     this.content = content
     this.peerId = peerId
     this.sessionId = sessionId
@@ -73,7 +77,8 @@ export class Message {
       data.workspace_id,
       data.metadata,
       data.created_at,
-      data.token_count
+      data.token_count,
+      data.internal_id
     )
   }
 

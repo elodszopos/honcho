@@ -236,6 +236,8 @@ export interface SessionSummariesResponse {
  */
 export interface MessageResponse {
   id: string
+  /** The id conclusions cite in `source_message_ids`. A different id space from `id`. */
+  internal_id?: number
   content: string
   peer_id: string
   session_id: string

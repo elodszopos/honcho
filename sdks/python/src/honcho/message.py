@@ -27,6 +27,7 @@ class Message:
     """
 
     id: str
+    internal_id: int | None
     content: str
     peer_id: str
     session_id: str
@@ -45,8 +46,11 @@ class Message:
         metadata: dict[str, Any],
         created_at: datetime.datetime,
         token_count: int,
+        internal_id: int | None = None,
     ) -> None:
         self.id = id
+        # The id conclusions cite in source_message_ids. Distinct from the public id.
+        self.internal_id = internal_id
         self.content = content
         self.peer_id = peer_id
         self.session_id = session_id
@@ -60,6 +64,7 @@ class Message:
         """Create a Message from an API response."""
         return cls(
             id=data.id,
+            internal_id=data.internal_id,
             content=data.content,
             peer_id=data.peer_id,
             session_id=data.session_id,

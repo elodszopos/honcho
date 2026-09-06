@@ -58,7 +58,13 @@ those sources twice.
 | what does this peer know | conclusion list, or semantic query |
 | what was retired here and why | conclusion list with `include_deleted` |
 | what happened to this one memory | the lineage route for that conclusion |
+| what did this message put into memory | conclusion list filtered on `admission.source_message_ids` |
 | what did this Hermes instance do, including failures | the plugin's local mutation log |
+
+Messages carry two ids. The public one identifies the message to clients; `internal_id` is
+what conclusions cite in `source_message_ids`, and is the one to join on. The plugin takes
+either a `source_message_id` or a `platform_message_id`, resolving the latter through the
+message metadata the sync path stamps — so only turns synced since that shipped resolve.
 
 Lineage returns prior formulations newest-first, every absorption with the survivor's count
 either side, and the removal record if there is one. It is the only way to read a retired

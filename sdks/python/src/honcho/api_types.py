@@ -387,6 +387,7 @@ class MessageResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore[reportUnannotatedClassAttribute]
 
     id: str
+    internal_id: int | None = None
     content: str
     peer_id: str
     session_id: str

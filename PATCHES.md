@@ -92,6 +92,11 @@ overrides say nothing about what a merge would revert. The assertion lives in
   either side, so callers never compute merge arithmetic themselves.
 - A search receipt may name a retired conclusion, because a receipt is history. The evidence a
   derived conclusion rests on, and any enrichment target, must still be live.
+- The message response carries `internal_id` alongside the public `id`. Conclusions cite the
+  internal one in `source_message_ids`, so upstream already publishes that id space while
+  offering no way to resolve it — a caller could read that a memory came from message N and
+  never learn which message N is. Both SDKs carry it. Drop this only if upstream stops citing
+  internal ids in the admission envelope.
 - `src/writing_contract.py` owns the writing rules and the conclusion bounds. The deriver,
   the dialectic agent, both summarizers and the dreamer's specialists embed the shared
   block; the bound is published in the tool JSON schema the model plans against and

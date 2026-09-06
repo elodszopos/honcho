@@ -363,6 +363,9 @@ class MessageUpdate(MessageBase):
 
 class Message(MessageBase):
     public_id: str = Field(serialization_alias="id")
+    # Conclusions cite this one in source_message_ids, not the public id. Without it
+    # a caller holding a message cannot ask what that message put into memory.
+    id: int = Field(serialization_alias="internal_id")
     content: str
     peer_name: str = Field(serialization_alias="peer_id")
     session_name: str = Field(serialization_alias="session_id")

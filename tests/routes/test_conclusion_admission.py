@@ -673,6 +673,64 @@ def test_a_search_receipt_may_name_a_retired_conclusion_but_evidence_may_not(
     assert "retired" in rejected.text
 
 
+def test_a_message_can_be_joined_to_what_it_put_into_memory(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+    conclusion_messages: tuple[models.Session, models.Message, models.Message],
+):
+    """Conclusions cite the internal message id, so the message API has to return it.
+
+    Without it the citation is a dangling pointer: a caller can read that a memory
+    came from message N and has no way to ask which message N is, or the reverse.
+    """
+    workspace, observer, observed = conclusion_scope
+    session, observed_message, _ = conclusion_messages
+
+    payload = _admission_payload(
+        content="The user prefers dark mode",
+        observer=observer.name,
+        observed=observed.name,
+        searched_ids=[],
+    )
+    payload["session_id"] = session.name
+    payload["source_message_ids"] = [observed_message.id]
+    created = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions",
+        json={"conclusions": [payload]},
+    )
+    assert created.status_code == 201
+    conclusion = created.json()[0]
+
+    listed = client.post(
+        f"/v3/workspaces/{workspace.name}/sessions/{session.name}/messages/list",
+        json={},
+    )
+    assert listed.status_code == 200
+    rows = {row["internal_id"]: row for row in listed.json()["items"]}
+
+    # Forward: the id the conclusion cites resolves to a real message.
+    cited = _lineage(client, workspace=workspace.name, conclusion_id=conclusion["id"])[
+        "admission"
+    ]["source_message_ids"]
+    assert cited == [observed_message.id]
+    assert rows[observed_message.id]["content"] == observed_message.content
+    # The public id is a different id space and must not be confused for it.
+    assert rows[observed_message.id]["id"] != observed_message.id
+
+    # Reverse: from that message id back to every conclusion it produced.
+    traced = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions/list",
+        json={
+            "filters": {
+                "metadata": {"admission": {"source_message_ids": [observed_message.id]}}
+            }
+        },
+        params={"include_deleted": "true"},
+    )
+    assert traced.status_code == 200
+    assert [row["id"] for row in traced.json()["items"]] == [conclusion["id"]]
+
+
 def test_lineage_returns_prior_formulations_newest_first(
     client: TestClient,
     conclusion_scope: tuple[Workspace, Peer, Peer],
