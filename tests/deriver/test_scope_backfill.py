@@ -33,7 +33,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from src import crud, models
+from src import crud, models, schemas
 from src.deriver import scope_backfill as scope_backfill_mod
 from src.deriver.scope_backfill import (
     COPIED_FROM_KEY,
@@ -349,6 +349,91 @@ async def test_add_remove_readd_converges_on_one_live_copy(
     live_copies = [d for d in all_copies if d.deleted_at is None]
     assert len(all_copies) == 1  # restored, not duplicated
     assert len(live_copies) == 1
+
+
+async def test_scope_removal_records_why_and_only_it_is_reversible(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    """Membership withdrawal is reversible; a copy retired for cause must not return."""
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_name = str(generate_nanoid())
+    scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=sender.name,
+        observed=sender.name,
+        session_name=session.name,
+    )
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+
+    backfill_payload = ScopeBackfillPayload(
+        scope_peer=scope_peer.name, session_name=session.name
+    )
+    removal_payload = ScopeRemovalPayload(
+        scope_peer=scope_peer.name, session_name=session.name
+    )
+
+    async def _copy_rows() -> list[Any]:
+        """Column select, not ORM: another process writes these rows between reads."""
+        result = await db_session.execute(
+            select(
+                models.Document.id,
+                models.Document.deleted_at,
+                models.Document.internal_metadata,
+            ).where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.observer == scope_peer.name,
+                models.Document.observed == sender.name,
+            )
+        )
+        return list(result.all())
+
+    await process_scope_backfill(backfill_payload, workspace_name)
+    await process_scope_removal(removal_payload, workspace_name)
+
+    withdrawn = await _copy_rows()
+    assert len(withdrawn) == 1
+    removal = withdrawn[0].internal_metadata["removal"]
+    assert removal["category"] == "scope_removed"
+    assert removal["entry_origin"] == "system"
+    assert "agent_trace_id" not in removal
+
+    # A withdrawal is reversible, and the restored row stops claiming it was removed.
+    await process_scope_backfill(backfill_payload, workspace_name)
+    restored = await _copy_rows()
+    assert len(restored) == 1
+    assert restored[0].deleted_at is None
+    assert "removal" not in restored[0].internal_metadata
+
+    # Retire that live copy for cause; a re-add must copy fresh, never revive it.
+    await crud.soft_delete_documents(
+        db_session,
+        workspace_name,
+        [restored[0].id],
+        removal=schemas.ConclusionRemoval(
+            category="contradicted",
+            reason="Reality contradicted this copy",
+            entry_origin="operator_sdk",
+            agent_trace_id="test-trace",
+            agent_model="test-model",
+        ),
+    )
+    await db_session.commit()
+
+    await process_scope_backfill(backfill_payload, workspace_name)
+    live = [row for row in await _copy_rows() if row.deleted_at is None]
+    assert len(live) == 1
+    assert live[0].id != restored[0].id
 
 
 async def test_backfill_skips_a_session_that_left_the_scope(

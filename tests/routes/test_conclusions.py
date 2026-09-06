@@ -8,6 +8,18 @@ from src.config import settings
 from src.models import Peer, Workspace
 
 
+def _removal_body(**overrides: object) -> dict[str, object]:
+    body: dict[str, object] = {
+        "category": "misderived",
+        "reason": "The test retired this conclusion",
+        "entry_origin": "operator_sdk",
+        "agent_trace_id": "test-trace",
+        "agent_model": "test-model",
+    }
+    body.update(overrides)
+    return body
+
+
 class TestConclusionRoutes:
     """Test suite for conclusion API endpoints."""
 
@@ -653,8 +665,10 @@ class TestConclusionRoutes:
         conclusion_id = doc.id
 
         # Delete conclusion
-        response = client.delete(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{conclusion_id}"
+        response = client.request(
+            "DELETE",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{conclusion_id}",
+            json=_removal_body(),
         )
 
         assert response.status_code == 204
@@ -686,8 +700,10 @@ class TestConclusionRoutes:
         await db_session.commit()
 
         # Try to delete non-existent conclusion
-        response = client.delete(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/nonexistent_id"
+        response = client.request(
+            "DELETE",
+            f"/v3/workspaces/{test_workspace.name}/conclusions/nonexistent_id",
+            json=_removal_body(),
         )
 
         assert response.status_code == 404

@@ -67,6 +67,10 @@ async def list_conclusions(
         False,
         description="Whether to reverse the order of results",
     ),
+    include_deleted: bool = Query(
+        False,
+        description="Include retired Conclusions, each carrying the reason it was removed",
+    ),
     db: AsyncSession = read_db,
 ):
     """
@@ -82,6 +86,7 @@ async def list_conclusions(
         workspace_name=workspace_id,
         filters=filters,
         reverse=reverse or False,
+        include_deleted=include_deleted,
     )
 
     return await apaginate(db, stmt)
@@ -134,6 +139,31 @@ async def query_conclusions(
     return [schemas.Conclusion.model_validate(doc) for doc in documents]
 
 
+@router.get(
+    "/{conclusion_id}/lineage",
+    response_model=schemas.ConclusionDetail,
+)
+async def get_conclusion_lineage(
+    workspace_id: str = Path(...),
+    conclusion_id: str = Path(...),
+    db: AsyncSession = read_db,
+) -> schemas.ConclusionDetail:
+    """
+    Get one Conclusion's full ledger: how it was admitted, every prior formulation it
+    has been rewritten from, everything it absorbed, and why it was removed if it was.
+
+    Retired Conclusions are returned here; they are never returned by search.
+    """
+    document = await crud.get_document(
+        db,
+        workspace_name=workspace_id,
+        document_id=conclusion_id,
+    )
+    if document is None:
+        raise ResourceNotFoundException("Conclusion not found")
+    return schemas.ConclusionDetail.model_validate(document)
+
+
 @router.delete(
     "/{conclusion_id}",
     status_code=204,
@@ -142,23 +172,35 @@ async def query_conclusions(
 async def delete_conclusion(
     workspace_id: str = Path(...),
     conclusion_id: str = Path(...),
+    body: schemas.ConclusionRemoval = Body(
+        ...,
+        description="Why this Conclusion is being retired",
+    ),
     db: AsyncSession = db,
 ):
     """
-    Delete a single Conclusion by ID.
+    Retire a single Conclusion by ID, recording why.
 
-    This action cannot be undone.
+    The row and its ledger are kept; the Conclusion stops being returned by search and
+    stops reaching any deriving agent. Use `duplicate_absorbed` with `absorbed_into` when
+    another Conclusion carries the memory, so its derivation count moves with it.
     """
+    if body.category not in schemas.AGENT_REMOVAL_CATEGORIES:
+        raise ValidationException(
+            f"'{body.category}' is recorded by Honcho itself and cannot be supplied. "
+            + f"Choose one of: {', '.join(sorted(schemas.AGENT_REMOVAL_CATEGORIES))}."
+        )
     try:
         await crud.delete_document_by_id(
             db,
             workspace_name=workspace_id,
             document_id=conclusion_id,
+            removal=body,
         )
 
-        logger.debug("Conclusion %s deleted successfully", conclusion_id)
+        logger.debug("Conclusion %s retired successfully", conclusion_id)
     except ResourceNotFoundException:
         raise
     except ValueError as e:
-        logger.warning(f"Failed to delete conclusion {conclusion_id}: {str(e)}")
+        logger.warning(f"Failed to retire conclusion {conclusion_id}: {str(e)}")
         raise ResourceNotFoundException("Conclusion not found") from e

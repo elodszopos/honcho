@@ -350,7 +350,7 @@ describe('Conclusions', () => {
   // ===========================================================================
 
   describe('DELETE /conclusions/:id', () => {
-    test('delete removes conclusion', async () => {
+    test('retiring a conclusion keeps it readable with its reason', async () => {
       const peer = await client.peer('delete-conclusion-peer', { metadata: {} })
       const session = await client.session('delete-conclusion-session', { metadata: {} })
 
@@ -358,13 +358,55 @@ describe('Conclusions', () => {
         operatorConclusion('To be deleted', session)
       )
 
-      // Delete it
-      await peer.conclusions.delete(conclusion.id)
+      await peer.conclusions.delete(conclusion.id, {
+        category: 'misderived',
+        reason: 'The test retired this conclusion',
+        agent_trace_id: 'test-trace',
+        agent_model: 'test-model',
+      })
 
-      // Should not appear in list
+      // Should not appear in the live list
       const page = await peer.conclusions.list()
-      const ids = page.items.map((c) => c.id)
-      expect(ids).not.toContain(conclusion.id)
+      expect(page.items.map((c) => c.id)).not.toContain(conclusion.id)
+
+      // Still readable with includeDeleted, carrying why it went
+      const withDeleted = await peer.conclusions.list({ includeDeleted: true })
+      const retired = withDeleted.items.find((c) => c.id === conclusion.id)
+      expect(retired?.removal?.category).toBe('misderived')
+      expect(retired?.deletedAt).not.toBeNull()
+    })
+
+    test('duplicate_absorbed moves the count and requires a survivor', async () => {
+      const peer = await client.peer('absorb-conclusion-peer', { metadata: {} })
+      const session = await client.session('absorb-conclusion-session', { metadata: {} })
+
+      const [survivor] = await peer.conclusions.create(
+        operatorConclusion('The user keeps bees', session)
+      )
+      const [duplicate] = await peer.conclusions.create(
+        operatorConclusion('The user is a beekeeper', session)
+      )
+
+      await expect(
+        peer.conclusions.delete(duplicate.id, {
+          category: 'duplicate_absorbed',
+          reason: 'Same memory as the survivor',
+          agent_trace_id: 'test-trace',
+          agent_model: 'test-model',
+        })
+      ).rejects.toThrow('duplicate_absorbed requires absorbed_into')
+
+      await peer.conclusions.delete(duplicate.id, {
+        category: 'duplicate_absorbed',
+        reason: 'Same memory as the survivor',
+        absorbed_into: survivor.id,
+        agent_trace_id: 'test-trace',
+        agent_model: 'test-model',
+      })
+
+      const lineage = await peer.conclusions.lineage(survivor.id)
+      expect(lineage.timesDerived).toBe(2)
+      expect(lineage.absorbed[0]?.document_id).toBe(duplicate.id)
     })
   })
 

@@ -17,8 +17,9 @@ def _admission_payload(
     searched_ids: list[str],
     action: str = "create",
     target_id: str | None = None,
+    times_derived: int | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "content": content,
         "observer_id": observer,
         "observed_id": observed,
@@ -33,6 +34,9 @@ def _admission_payload(
         "agent_trace_id": "agent-trace-1",
         "agent_model": "test-agent",
     }
+    if times_derived is not None:
+        payload["times_derived"] = times_derived
+    return payload
 
 
 def _search(
@@ -50,6 +54,47 @@ def _search(
             "top_k": 10,
             "filters": {"observer": observer, "observed": observed},
         },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def _retire(
+    client: TestClient,
+    *,
+    workspace: str,
+    conclusion_id: str,
+    category: str = "misderived",
+    reason: str = "The extraction misread the message",
+    absorbed_into: str | None = None,
+    entry_origin: str = "explicit_agent",
+    agent_trace_id: str | None = "agent-trace-1",
+    agent_model: str | None = "test-agent",
+):
+    body: dict[str, Any] = {
+        "category": category,
+        "reason": reason,
+        "entry_origin": entry_origin,
+    }
+    if absorbed_into is not None:
+        body["absorbed_into"] = absorbed_into
+    if agent_trace_id is not None:
+        body["agent_trace_id"] = agent_trace_id
+    if agent_model is not None:
+        body["agent_model"] = agent_model
+    return client.request(
+        "DELETE",
+        f"/v3/workspaces/{workspace}/conclusions/{conclusion_id}",
+        json=body,
+    )
+
+
+def _lineage(
+    client: TestClient, *, workspace: str, conclusion_id: str
+) -> dict[str, Any]:
+    """Prior formulations and absorptions live here, never on the list or create response."""
+    response = client.get(
+        f"/v3/workspaces/{workspace}/conclusions/{conclusion_id}/lineage"
     )
     assert response.status_code == 200
     return response.json()
@@ -307,7 +352,14 @@ def test_enrichment_preserves_predecessor_and_records_revision(
     row = response.json()[0]
     assert row["content"] == enriched_content
     assert row["admission"]["supersedes_id"] == old_id
-    assert row["admission_history"][-1]["document_id"] == old_id
+    assert "admission_history" not in row
+    lineage = _lineage(client, workspace=workspace.name, conclusion_id=row["id"])
+    assert lineage["admission_history"][-1]["document_id"] == old_id
+
+    retired = _lineage(client, workspace=workspace.name, conclusion_id=old_id)
+    assert retired["removal"]["category"] == "superseded_by_enrichment"
+    assert retired["removal"]["entry_origin"] == "system"
+    assert "agent_trace_id" not in retired["removal"]
 
     active = _search(
         client,
@@ -319,6 +371,382 @@ def test_enrichment_preserves_predecessor_and_records_revision(
     active_ids = [item["id"] for item in active]
     assert old_id not in active_ids
     assert row["id"] in active_ids
+
+
+def _enrich_a_reinforced_conclusion(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+    *,
+    predecessor_count: int,
+    supplied_count: int | None,
+) -> int:
+    """Admit a conclusion at a known count, enrich it, return the replacement's count."""
+    workspace, observer, observed = conclusion_scope
+    created = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions",
+        json={
+            "conclusions": [
+                _admission_payload(
+                    content="The user prefers dark mode",
+                    observer=observer.name,
+                    observed=observed.name,
+                    searched_ids=[],
+                    times_derived=predecessor_count,
+                )
+            ]
+        },
+    )
+    assert created.status_code == 201
+    old_id = created.json()[0]["id"]
+    assert created.json()[0]["times_derived"] == predecessor_count
+
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions",
+        json={
+            "conclusions": [
+                _admission_payload(
+                    content="The user prefers dark mode on desktop and mobile",
+                    observer=observer.name,
+                    observed=observed.name,
+                    searched_ids=[old_id],
+                    action="enrich",
+                    target_id=old_id,
+                    times_derived=supplied_count,
+                )
+            ]
+        },
+    )
+    assert response.status_code == 201
+    row = response.json()[0]
+    lineage = _lineage(client, workspace=workspace.name, conclusion_id=row["id"])
+    assert lineage["admission_history"][-1]["times_derived"] == predecessor_count
+    return row["times_derived"]
+
+
+def test_enrichment_carries_the_predecessor_reinforcement_forward(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    """An admitted enrich is a re-derivation: the count rises, it does not reset to 1."""
+    assert (
+        _enrich_a_reinforced_conclusion(
+            client,
+            conclusion_scope,
+            predecessor_count=5,
+            supplied_count=None,
+        )
+        == 6
+    )
+
+
+def test_enrichment_cannot_lower_a_reinforcement_count(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    """A caller that supplies too little is corrected by the store, not obeyed."""
+    assert (
+        _enrich_a_reinforced_conclusion(
+            client,
+            conclusion_scope,
+            predecessor_count=5,
+            supplied_count=2,
+        )
+        == 6
+    )
+
+
+def test_enrichment_honours_a_supplied_count_above_the_predecessor(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    """A consolidation carrying several sources' counts keeps its own arithmetic."""
+    assert (
+        _enrich_a_reinforced_conclusion(
+            client,
+            conclusion_scope,
+            predecessor_count=5,
+            supplied_count=9,
+        )
+        == 9
+    )
+
+
+def _admit(
+    client: TestClient,
+    workspace: str,
+    observer: str,
+    observed: str,
+    content: str,
+    *,
+    times_derived: int | None = None,
+) -> str:
+    response = client.post(
+        f"/v3/workspaces/{workspace}/conclusions",
+        json={
+            "conclusions": [
+                _admission_payload(
+                    content=content,
+                    observer=observer,
+                    observed=observed,
+                    searched_ids=[],
+                    times_derived=times_derived,
+                )
+            ]
+        },
+    )
+    assert response.status_code == 201
+    return response.json()[0]["id"]
+
+
+def test_absorption_moves_the_count_onto_the_survivor(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    """A duplicate's derivations are the survivor's derivations; nothing is lost."""
+    workspace, observer, observed = conclusion_scope
+    survivor = _admit(
+        client,
+        workspace.name,
+        observer.name,
+        observed.name,
+        "The user keeps bees",
+        times_derived=3,
+    )
+    duplicate = _admit(
+        client,
+        workspace.name,
+        observer.name,
+        observed.name,
+        "The user is a beekeeper",
+        times_derived=4,
+    )
+
+    response = _retire(
+        client,
+        workspace=workspace.name,
+        conclusion_id=duplicate,
+        category="duplicate_absorbed",
+        reason="The survivor states this more fully",
+        absorbed_into=survivor,
+    )
+    assert response.status_code == 204
+
+    lineage = _lineage(client, workspace=workspace.name, conclusion_id=survivor)
+    assert lineage["times_derived"] == 7
+    absorbed = lineage["absorbed"][0]
+    assert absorbed["document_id"] == duplicate
+    assert absorbed["times_derived"] == 4
+    assert absorbed["survivor_count_before"] == 3
+    assert absorbed["survivor_count_after"] == 7
+    assert absorbed["content"] == "The user is a beekeeper"
+
+    retired = _lineage(client, workspace=workspace.name, conclusion_id=duplicate)
+    assert retired["removal"]["absorbed_into"] == survivor
+    assert retired["deleted_at"] is not None
+
+
+def test_an_absorption_survives_the_next_enrichment(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    """A revision inherits the whole ledger, or the first rewrite erases what it swallowed."""
+    workspace, observer, observed = conclusion_scope
+    survivor = _admit(
+        client, workspace.name, observer.name, observed.name, "The user keeps bees"
+    )
+    duplicate = _admit(
+        client, workspace.name, observer.name, observed.name, "The user is a beekeeper"
+    )
+    assert (
+        _retire(
+            client,
+            workspace=workspace.name,
+            conclusion_id=duplicate,
+            category="duplicate_absorbed",
+            reason="The survivor states this more fully",
+            absorbed_into=survivor,
+        ).status_code
+        == 204
+    )
+
+    enriched = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions",
+        json={
+            "conclusions": [
+                _admission_payload(
+                    content="The user keeps bees on the roof",
+                    observer=observer.name,
+                    observed=observed.name,
+                    searched_ids=[survivor],
+                    action="enrich",
+                    target_id=survivor,
+                )
+            ]
+        },
+    )
+    assert enriched.status_code == 201
+
+    lineage = _lineage(
+        client, workspace=workspace.name, conclusion_id=enriched.json()[0]["id"]
+    )
+    assert [row["document_id"] for row in lineage["absorbed"]] == [duplicate]
+    assert lineage["times_derived"] == 3
+
+
+def test_a_conclusion_cannot_be_absorbed_into_itself_or_a_stranger(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    workspace, observer, observed = conclusion_scope
+    conclusion = _admit(
+        client, workspace.name, observer.name, observed.name, "The user keeps bees"
+    )
+
+    same = _retire(
+        client,
+        workspace=workspace.name,
+        conclusion_id=conclusion,
+        category="duplicate_absorbed",
+        reason="Absorbing into itself",
+        absorbed_into=conclusion,
+    )
+    assert same.status_code == 422
+    assert "absorbed into itself" in same.text
+
+    missing = _retire(
+        client,
+        workspace=workspace.name,
+        conclusion_id=conclusion,
+        category="duplicate_absorbed",
+        reason="Absorbing into a conclusion that is not there",
+        absorbed_into="does-not-exist",
+    )
+    assert missing.status_code == 404
+
+
+def test_a_search_receipt_may_name_a_retired_conclusion_but_evidence_may_not(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    """A receipt is history; evidence a new conclusion rests on has to still be live."""
+    workspace, observer, observed = conclusion_scope
+    retired = _admit(
+        client, workspace.name, observer.name, observed.name, "The user keeps bees"
+    )
+    assert (
+        _retire(
+            client,
+            workspace=workspace.name,
+            conclusion_id=retired,
+            category="contradicted",
+            reason="The user has never kept bees",
+        ).status_code
+        == 204
+    )
+
+    receipt = _admission_payload(
+        content="The user keeps chickens",
+        observer=observer.name,
+        observed=observed.name,
+        searched_ids=[retired],
+    )
+    accepted = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions",
+        json={"conclusions": [receipt]},
+    )
+    assert accepted.status_code == 201
+
+    evidence = _admission_payload(
+        content="The user likely enjoys smallholding",
+        observer=observer.name,
+        observed=observed.name,
+        searched_ids=[],
+    )
+    evidence["level"] = "deductive"
+    evidence["source_ids"] = [retired]
+    evidence["premises"] = ["The user keeps bees"]
+    rejected = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions",
+        json={"conclusions": [evidence]},
+    )
+    assert rejected.status_code == 422
+    assert "retired" in rejected.text
+
+
+def test_a_removal_needs_a_reason_and_an_agent_category(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    workspace, observer, observed = conclusion_scope
+    conclusion = _admit(
+        client, workspace.name, observer.name, observed.name, "The user keeps bees"
+    )
+
+    blank = _retire(
+        client, workspace=workspace.name, conclusion_id=conclusion, reason="   "
+    )
+    assert blank.status_code == 422
+
+    unattributed = _retire(
+        client,
+        workspace=workspace.name,
+        conclusion_id=conclusion,
+        agent_trace_id=None,
+        agent_model=None,
+    )
+    assert unattributed.status_code == 422
+
+    system_claim = _retire(
+        client,
+        workspace=workspace.name,
+        conclusion_id=conclusion,
+        category="scope_removed",
+        reason="Pretending to be the scope reconciler",
+        entry_origin="system",
+        agent_trace_id=None,
+        agent_model=None,
+    )
+    assert system_claim.status_code == 422
+    assert "recorded by Honcho itself" in system_claim.text
+
+
+def test_a_retired_conclusion_leaves_search_but_stays_listable(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    workspace, observer, observed = conclusion_scope
+    conclusion = _admit(
+        client, workspace.name, observer.name, observed.name, "The user keeps bees"
+    )
+    assert (
+        _retire(
+            client,
+            workspace=workspace.name,
+            conclusion_id=conclusion,
+            category="contradicted",
+            reason="The user has never kept bees",
+        ).status_code
+        == 204
+    )
+
+    live = _search(
+        client,
+        workspace=workspace.name,
+        query="bees",
+        observer=observer.name,
+        observed=observed.name,
+    )
+    assert conclusion not in [row["id"] for row in live]
+
+    listed = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions/list",
+        json={"filters": {"observer": observer.name, "observed": observed.name}},
+        params={"include_deleted": "true"},
+    )
+    assert listed.status_code == 200
+    retired = next(row for row in listed.json()["items"] if row["id"] == conclusion)
+    assert retired["removal"]["category"] == "contradicted"
+    assert "admission_history" not in retired
 
 
 def test_batch_enrichment_conflict_rolls_back_every_replacement(
@@ -418,7 +846,10 @@ def test_enrichment_can_rewrite_while_history_retains_predecessor(
     assert response.status_code == 201
     replacement = response.json()[0]
     assert replacement["content"] == "The user likes dark themes"
-    assert replacement["admission_history"][-1]["content"] == old_content
+    lineage = _lineage(
+        client, workspace=workspace.name, conclusion_id=replacement["id"]
+    )
+    assert lineage["admission_history"][-1]["content"] == old_content
 
     active = _search(
         client,

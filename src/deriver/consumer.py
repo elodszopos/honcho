@@ -5,7 +5,7 @@ import sentry_sdk
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from src import crud, models
+from src import crud, models, schemas
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.deriver.scope_backfill import (
@@ -303,7 +303,14 @@ async def process_deletion(
             elif deletion_type == "observation":
                 try:
                     await crud.delete_document_by_id(
-                        db, workspace_name=workspace_name, document_id=resource_id
+                        db,
+                        workspace_name=workspace_name,
+                        document_id=resource_id,
+                        removal=schemas.ConclusionRemoval(
+                            category="queued_delete",
+                            reason="A queued deletion task retired this conclusion.",
+                            entry_origin="system",
+                        ),
                     )
                     conclusions_deleted = 1  # Single observation deleted
                     logger.info(

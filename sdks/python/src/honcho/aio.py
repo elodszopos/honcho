@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 from pydantic import BaseModel, ConfigDict, Field, validate_call
 
 from .api_types import (
+    ConclusionLineageResponse,
+    ConclusionRemovalParams,
     ConclusionResponse,
     MessageCreateParams,
     MessageResponse,
@@ -39,6 +41,7 @@ from .api_types import (
     PeerContextResponse,
     PeerResponse,
     QueueStatusResponse,
+    RemovalCategory,
     RepresentationResponse,
     ScopeBackfillJob,
     ScopeResponse,
@@ -54,6 +57,7 @@ from .conclusions import (
     _VIEW_RESERVED,
     Conclusion,
     ConclusionCreateParams,
+    ConclusionLineage,
     _reject_reserved_filter_keys,
 )
 from .http import routes
@@ -1752,8 +1756,12 @@ class ConclusionsViewAio:
         *,
         filters: dict[str, Any] | None = None,
         reverse: bool = False,
+        include_deleted: bool = False,
     ) -> AsyncPage[ConclusionResponse, Conclusion]:
         """List conclusions in this scope asynchronously.
+
+        Pass ``include_deleted`` to include retired conclusions, each carrying the
+        ``removal`` record saying why it went.
 
         Pass ``filters`` to add criteria merged with this scope's
         observer/observed (and session, if given) — e.g.
@@ -1776,6 +1784,8 @@ class ConclusionsViewAio:
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
+        if include_deleted:
+            query["include_deleted"] = "true"
         data = await self._view._honcho._async_http_client.post(
             routes.conclusions_list(self._view.workspace_id),
             body={"filters": filters},
@@ -1791,6 +1801,8 @@ class ConclusionsViewAio:
             next_query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 next_query["reverse"] = "true"
+            if include_deleted:
+                next_query["include_deleted"] = "true"
             next_data = await self._view._honcho._async_http_client.post(
                 routes.conclusions_list(self._view.workspace_id),
                 body={"filters": filters},
@@ -1842,11 +1854,44 @@ class ConclusionsViewAio:
             for item in data
         ]
 
-    async def delete(self, conclusion_id: str) -> None:
-        """Delete a conclusion by ID asynchronously."""
+    async def delete(
+        self,
+        conclusion_id: str,
+        *,
+        category: RemovalCategory,
+        reason: str,
+        agent_trace_id: str,
+        agent_model: str,
+        absorbed_into: str | None = None,
+        entry_origin: str = "operator_sdk",
+    ) -> None:
+        """Retire a conclusion by ID asynchronously, recording why.
+
+        ``absorbed_into`` is required for "duplicate_absorbed" and moves this
+        conclusion's derivation count onto the survivor.
+        """
         await self._view._honcho._ensure_workspace_async()
+        removal = ConclusionRemovalParams(
+            category=category,
+            reason=reason,
+            absorbed_into=absorbed_into,
+            entry_origin=entry_origin,
+            agent_trace_id=agent_trace_id,
+            agent_model=agent_model,
+        )
         await self._view._honcho._async_http_client.delete(
-            routes.conclusion(self._view.workspace_id, conclusion_id)
+            routes.conclusion(self._view.workspace_id, conclusion_id),
+            body=removal.model_dump(exclude_none=True),
+        )
+
+    async def lineage(self, conclusion_id: str) -> ConclusionLineage:
+        """Get one conclusion's full ledger asynchronously, live or retired."""
+        await self._view._honcho._ensure_workspace_async()
+        data = await self._view._honcho._async_http_client.get(
+            routes.conclusion_lineage(self._view.workspace_id, conclusion_id)
+        )
+        return ConclusionLineage.from_lineage_response(
+            ConclusionLineageResponse.model_validate(data)
         )
 
     async def create(

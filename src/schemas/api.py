@@ -7,7 +7,7 @@ API contract.
 import datetime
 import ipaddress
 import re
-from typing import Annotated, Any, Literal, Self, cast
+from typing import Annotated, Any, Literal, Self, cast, get_args
 from urllib.parse import urlparse
 
 import tiktoken
@@ -626,14 +626,17 @@ class Conclusion(BaseModel):
         ),
     )
     admission: dict[str, Any] = Field(validation_alias="internal_metadata")
-    admission_history: list[dict[str, Any]] = Field(
-        validation_alias="internal_metadata"
+    removal: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias="internal_metadata",
+        description="Why this conclusion was retired; absent while it is live.",
     )
     times_derived: int = Field(
         default=1,
         description="Number of times this conclusion has been independently derived.",
     )
     created_at: datetime.datetime
+    deleted_at: datetime.datetime | None = None
 
     @field_validator("admission", mode="before")
     @classmethod
@@ -650,6 +653,30 @@ class Conclusion(BaseModel):
             ),
         }
 
+    @field_validator("removal", mode="before")
+    @classmethod
+    def extract_removal(cls, metadata: Any) -> dict[str, Any] | None:
+        if isinstance(metadata, dict):
+            typed_metadata = cast(dict[str, Any], metadata)
+            removal = typed_metadata.get("removal")
+            if isinstance(removal, dict):
+                return cast(dict[str, Any], removal)
+        return None
+
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True,
+        populate_by_name=True,
+    )
+
+
+class ConclusionDetail(Conclusion):
+    """One conclusion's full ledger: every prior formulation and every absorption."""
+
+    admission_history: list[dict[str, Any]] = Field(
+        validation_alias="internal_metadata"
+    )
+    absorbed: list[dict[str, Any]] = Field(validation_alias="internal_metadata")
+
     @field_validator("admission_history", mode="before")
     @classmethod
     def extract_admission_history(cls, metadata: Any) -> list[dict[str, Any]]:
@@ -660,10 +687,15 @@ class Conclusion(BaseModel):
                 return cast(list[dict[str, Any]], history)
         return []
 
-    model_config = ConfigDict(  # pyright: ignore
-        from_attributes=True,
-        populate_by_name=True,
-    )
+    @field_validator("absorbed", mode="before")
+    @classmethod
+    def extract_absorbed(cls, metadata: Any) -> list[dict[str, Any]]:
+        if isinstance(metadata, dict):
+            typed_metadata = cast(dict[str, Any], metadata)
+            absorbed = typed_metadata.get("absorbed")
+            if isinstance(absorbed, list):
+                return cast(list[dict[str, Any]], absorbed)
+        return []
 
 
 class ConclusionQuery(BaseModel):
@@ -688,6 +720,18 @@ class ConclusionQuery(BaseModel):
     )
 
 
+EntryOrigin = Literal[
+    "deriver_agent",
+    "dreamer_agent",
+    "explicit_agent",
+    "operator_cli",
+    "operator_sdk",
+    "operator_import",
+]
+
+RemovalOrigin = EntryOrigin | Literal["system"]
+
+
 class ConclusionCreate(BaseModel):
     """One agent- or operator-admitted conclusion with evidence and provenance."""
 
@@ -699,10 +743,6 @@ class ConclusionCreate(BaseModel):
         description="A session ID to store the conclusion in, if specified",
     )
     level: DocumentLevel = "explicit"
-    # TODO(DEFERRED): add a third verb, "reinforce" -- target_id, no content, bumps
-    # times_derived and appends an admission_history entry. The janitor's tools are create
-    # plus soft-delete, so absorbed duplicates take their counts with them today. Plan C in
-    # PLAN-reinforcement.md; mirrored in mcp/src/tools/conclusions.ts and both SDKs.
     action: Literal["create", "enrich"]
     target_id: str | None = None
     reason_for_entry: str = Field(min_length=1)
@@ -710,14 +750,7 @@ class ConclusionCreate(BaseModel):
     searched_conclusion_ids: list[str]
     source_message_ids: list[int] = Field(default_factory=list)
     source_tool_call_id: str | None = None
-    entry_origin: Literal[
-        "deriver_agent",
-        "dreamer_agent",
-        "explicit_agent",
-        "operator_cli",
-        "operator_sdk",
-        "operator_import",
-    ] = "explicit_agent"
+    entry_origin: EntryOrigin = "explicit_agent"
     agent_trace_id: str = Field(min_length=1)
     agent_model: str = Field(min_length=1)
     times_derived: int | None = Field(
@@ -824,6 +857,91 @@ class ConclusionBatchCreate(BaseModel):
         max_length=100,
         validation_alias=AliasChoices("conclusions", "observations"),
     )
+
+
+AgentRemovalCategory = Literal[
+    "duplicate_absorbed",
+    "superseded",
+    "contradicted",
+    "misderived",
+    "out_of_scope",
+    "transient",
+    "low_value",
+]
+
+SystemRemovalCategory = Literal[
+    "superseded_by_enrichment",
+    "semantic_dup_replaced",
+    "scope_removed",
+    "queued_delete",
+]
+
+RemovalCategory = AgentRemovalCategory | SystemRemovalCategory
+
+AGENT_REMOVAL_CATEGORIES: frozenset[str] = frozenset(get_args(AgentRemovalCategory))
+SYSTEM_REMOVAL_CATEGORIES: frozenset[str] = frozenset(get_args(SystemRemovalCategory))
+ABSORBING_REMOVAL_CATEGORIES: frozenset[str] = frozenset({"duplicate_absorbed"})
+
+
+class ConclusionRemoval(BaseModel):
+    """Why a conclusion left the live pool, recorded on the row it retires."""
+
+    category: RemovalCategory
+    reason: str = Field(min_length=1)
+    absorbed_into: str | None = Field(
+        default=None,
+        description="The surviving conclusion this one was folded into.",
+    )
+    entry_origin: RemovalOrigin = Field(
+        description="The agent origin that decided, or 'system' for a subsystem removal.",
+    )
+    agent_trace_id: str | None = None
+    agent_model: str | None = None
+
+    @field_validator("reason", mode="after")
+    @classmethod
+    def sanitize_reason(cls, value: str) -> str:
+        cleaned = strip_nul(value).strip()
+        if not cleaned:
+            raise ValueError("reason must contain non-whitespace text")
+        return cleaned
+
+    @field_validator("absorbed_into", "agent_trace_id", "agent_model", mode="after")
+    @classmethod
+    def sanitize_optional_removal_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def validate_removal(self) -> Self:
+        absorbing = self.category in ABSORBING_REMOVAL_CATEGORIES
+        if absorbing and not self.absorbed_into:
+            raise ValueError(
+                f"absorbed_into is required when category is {self.category}"
+            )
+        if not absorbing and self.absorbed_into:
+            raise ValueError(
+                f"absorbed_into is forbidden when category is {self.category}"
+            )
+
+        if self.category in SYSTEM_REMOVAL_CATEGORIES:
+            if self.entry_origin != "system":
+                raise ValueError(
+                    f"{self.category} removals must carry entry_origin 'system'"
+                )
+            if self.agent_trace_id or self.agent_model:
+                raise ValueError(f"{self.category} removals carry no agent attribution")
+        else:
+            if self.entry_origin == "system":
+                raise ValueError(
+                    f"{self.category} removals require a named agent origin"
+                )
+            if not self.agent_trace_id or not self.agent_model:
+                raise ValueError(
+                    f"{self.category} removals require agent_trace_id and agent_model"
+                )
+        return self
 
 
 # ---------------------------------------------------------------------------

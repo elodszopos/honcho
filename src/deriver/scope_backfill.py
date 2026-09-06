@@ -26,14 +26,14 @@ own short-lived session.
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import load_only
 from sqlalchemy.sql.functions import func
 
-from src import crud, models
+from src import crud, models, schemas
 from src.config import settings
 from src.crud.scope import ScopeBackfillState
 from src.dependencies import tracked_db
@@ -239,9 +239,14 @@ async def _run_backfill(
         soft_deleted_copies: dict[tuple[str, str], str] = {}
         for copy_doc in copies_result.scalars().all():
             key = (copy_doc.observed, str(copy_doc.internal_metadata[COPIED_FROM_KEY]))
+            removal = cast(
+                dict[str, Any], copy_doc.internal_metadata.get("removal") or {}
+            )
             if copy_doc.deleted_at is None:
                 live_copies.add(key)
-            else:
+            elif removal.get("category") == "scope_removed":
+                # Only a membership withdrawal is reversible. A copy the janitor retired
+                # for cause must not return; re-adding the session copies it fresh instead.
                 soft_deleted_copies.setdefault(key, copy_doc.id)
 
         for source in source_docs:
@@ -384,7 +389,13 @@ async def _copy_chunk(
             await db.execute(
                 update(models.Document)
                 .where(models.Document.id.in_(restore_ids))
-                .values(deleted_at=None, sync_state="pending")
+                .values(
+                    deleted_at=None,
+                    sync_state="pending",
+                    internal_metadata=models.Document.internal_metadata.op("-")(
+                        "removal"
+                    ),
+                )
             )
         await db.commit()
 
@@ -508,20 +519,30 @@ async def process_scope_removal(
             )
         )
         for observed in [row[0] for row in observed_result.all()]:
-            explicit_stmt = (
-                update(models.Document)
-                .where(
-                    models.Document.workspace_name == workspace_name,
-                    models.Document.observer == scope_peer,
-                    models.Document.observed == observed,
-                    models.Document.session_name == session_name,
-                    models.Document.level == "explicit",
-                    models.Document.deleted_at.is_(None),
-                )
-                .values(deleted_at=func.now())
-                .returning(models.Document.id)
+            scope_removal = schemas.ConclusionRemoval(
+                category="scope_removed",
+                reason=f"Session {session_name} left scope {scope_peer}.",
+                entry_origin="system",
             )
-            frontier = [row[0] for row in (await db.execute(explicit_stmt)).all()]
+            explicit_stmt = select(models.Document.id).where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.observer == scope_peer,
+                models.Document.observed == observed,
+                models.Document.session_name == session_name,
+                models.Document.level == "explicit",
+                models.Document.deleted_at.is_(None),
+            )
+            frontier = [
+                doc_id
+                for doc_id, _ in await crud.soft_delete_documents(
+                    db,
+                    workspace_name,
+                    [row[0] for row in (await db.execute(explicit_stmt)).all()],
+                    removal=scope_removal,
+                    observer=scope_peer,
+                    observed=observed,
+                )
+            ]
             all_removed = list(frontier)
 
             # Fail-closed cascade: soft-delete derived documents whose support
@@ -529,20 +550,25 @@ async def process_scope_removal(
             # deduction resting on removed evidence must leave with it, and so
             # must an induction resting on that deduction.
             while frontier:
-                derived_stmt = (
-                    update(models.Document)
-                    .where(
-                        models.Document.workspace_name == workspace_name,
-                        models.Document.observer == scope_peer,
-                        models.Document.observed == observed,
-                        models.Document.level != "explicit",
-                        models.Document.deleted_at.is_(None),
-                        models.Document.source_ids.has_any(array(frontier)),
-                    )
-                    .values(deleted_at=func.now())
-                    .returning(models.Document.id)
+                derived_stmt = select(models.Document.id).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == scope_peer,
+                    models.Document.observed == observed,
+                    models.Document.level != "explicit",
+                    models.Document.deleted_at.is_(None),
+                    models.Document.source_ids.has_any(array(frontier)),
                 )
-                frontier = [row[0] for row in (await db.execute(derived_stmt)).all()]
+                frontier = [
+                    doc_id
+                    for doc_id, _ in await crud.soft_delete_documents(
+                        db,
+                        workspace_name,
+                        [row[0] for row in (await db.execute(derived_stmt)).all()],
+                        removal=scope_removal,
+                        observer=scope_peer,
+                        observed=observed,
+                    )
+                ]
                 all_removed.extend(frontier)
 
             if all_removed:

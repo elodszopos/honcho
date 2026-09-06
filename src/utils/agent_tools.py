@@ -812,7 +812,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "delete_observations": {
         "name": "delete_observations",
-        "description": "Delete observations by their IDs. Use the exact ID shown in [id:xxx] format from search results. Example: if observation shows '[id:abc123XYZ]', pass 'abc123XYZ' to delete it.",
+        "description": "Retire observations by their IDs, recording why. Use the exact ID shown in [id:xxx] format from search results. Example: if observation shows '[id:abc123XYZ]', pass 'abc123XYZ'. Every removal needs a category and a specific reason.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -821,8 +821,25 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "items": {"type": "string"},
                     "description": "List of observation IDs to delete (use the exact ID from [id:xxx] in search results)",
                 },
+                "removal_category": {
+                    "type": "string",
+                    "enum": sorted(schemas.AGENT_REMOVAL_CATEGORIES),
+                    "description": "Why these observations are being retired. duplicate_absorbed requires absorbed_into.",
+                },
+                "reason_for_removal": {
+                    "type": "string",
+                    "description": "Specific justification, naming what carries the memory now when something does.",
+                },
+                "absorbed_into": {
+                    "type": "string",
+                    "description": "Required for duplicate_absorbed: the surviving observation ID that keeps the memory and inherits its derivation count.",
+                },
             },
-            "required": ["observation_ids"],
+            "required": [
+                "observation_ids",
+                "removal_category",
+                "reason_for_removal",
+            ],
         },
     },
     "finish_consolidation": {
@@ -2385,11 +2402,24 @@ async def _handle_delete_observations(
     if not observation_ids:
         return "ERROR: observation_ids list is empty"
 
+    try:
+        removal = schemas.ConclusionRemoval(
+            category=cast(Any, tool_input.get("removal_category")),
+            reason=str(tool_input.get("reason_for_removal") or ""),
+            absorbed_into=tool_input.get("absorbed_into"),
+            entry_origin="dreamer_agent",
+            agent_trace_id=ctx.run_id,
+            agent_model=ctx.agent_model,
+        )
+    except ValidationError as e:
+        return f"ERROR: {e.errors()[0]['msg']}"
+
     async with ctx.db_lock, tracked_db("tool.delete_observations") as db:
         deleted = await crud.delete_documents(
             db,
             workspace_name=ctx.workspace_name,
             document_ids=observation_ids,
+            removal=removal,
             observer=ctx.observer,
             observed=ctx.observed,
         )

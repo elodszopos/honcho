@@ -4,10 +4,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from logging import getLogger
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
-from sqlalchemy import delete, select, update
-from sqlalchemy.engine import CursorResult
+from sqlalchemy import select, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
@@ -88,26 +87,18 @@ def get_documents_with_filters(
     *,
     filters: dict[str, Any] | None = None,
     reverse: bool = False,
+    include_deleted: bool = False,
 ) -> Select[tuple[models.Document]]:
+    """Build the conclusion-listing query, newest first unless ``reverse``.
+
+    ``include_deleted`` belongs to this builder alone. No query an agent reaches may
+    take it — a retired conclusion must never re-enter derivation.
     """
-    Get all documents using custom filters.
-
-    Returns a Select query for pagination support via apaginate().
-    Results are ordered by created_at timestamp.
-
-    Args:
-        workspace_name: Name of the workspace
-        filters: Optional filters to apply
-        reverse: Whether to reverse the order (oldest first)
-
-    Returns:
-        Select query for documents
-    """
-    stmt = (
-        select(models.Document)
-        .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.deleted_at.is_(None))  # Exclude soft-deleted
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name
     )
+    if not include_deleted:
+        stmt = stmt.where(models.Document.deleted_at.is_(None))
 
     # Apply additional filters if provided
     stmt = apply_filter(stmt, models.Document, filters)
@@ -324,6 +315,8 @@ async def fetch_documents_by_ids(
     observed: str,
     document_ids: list[str],
     filters: dict[str, Any] | None = None,
+    *,
+    for_update: bool = False,
 ) -> list[models.Document]:
     """Fetch documents by IDs, preserving input order. DB-only operation."""
     if not document_ids:
@@ -338,6 +331,14 @@ async def fetch_documents_by_ids(
         .where(models.Document.id.in_(document_ids))
     )
     stmt = apply_filter(stmt, models.Document, filters)
+    if for_update:
+        # Lock in id order to match _apply_document_row_updates, and reload the identity
+        # map so a concurrent reinforcement is visible before the caller carries it forward.
+        stmt = (
+            stmt.order_by(models.Document.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
 
     result = await db.execute(stmt)
     documents = {doc.id: doc for doc in result.scalars().all()}
@@ -912,48 +913,123 @@ async def create_documents(
     )
 
 
+async def soft_delete_documents(
+    db: AsyncSession,
+    workspace_name: str,
+    document_ids: Sequence[str],
+    *,
+    removal: schemas.ConclusionRemoval,
+    observer: str | None = None,
+    observed: str | None = None,
+    session_name: str | None = None,
+) -> list[tuple[str, str]]:
+    """Retire conclusions with a recorded reason. The only writer of ``deleted_at``.
+
+    Targets and any absorption survivor lock in one id-ordered statement; no commit.
+    """
+    if not document_ids:
+        return []
+
+    target_ids = list(dict.fromkeys(document_ids))
+    survivor_id = removal.absorbed_into
+    if survivor_id and survivor_id in target_ids:
+        raise ValidationException("A conclusion cannot be absorbed into itself")
+
+    conditions = [
+        models.Document.id.in_(target_ids + ([survivor_id] if survivor_id else [])),
+        models.Document.workspace_name == workspace_name,
+        models.Document.deleted_at.is_(None),
+    ]
+    if observer is not None:
+        conditions.append(models.Document.observer == observer)
+    if observed is not None:
+        conditions.append(models.Document.observed == observed)
+    if session_name is not None:
+        conditions.append(models.Document.session_name == session_name)
+
+    result = await db.execute(
+        select(models.Document)
+        .where(*conditions)
+        .order_by(models.Document.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    locked = {doc.id: doc for doc in result.scalars()}
+
+    survivor = locked.get(survivor_id) if survivor_id else None
+    if survivor_id and survivor is None:
+        raise ResourceNotFoundException(
+            f"Absorption target {survivor_id} is not a live conclusion in this collection"
+        )
+
+    removed_at = datetime.datetime.now(datetime.UTC)
+    envelope = removal.model_dump(exclude_none=True)
+    envelope["removed_at"] = removed_at.isoformat()
+
+    retired: list[tuple[str, str]] = []
+    for document_id in target_ids:
+        doc = locked.get(document_id)
+        if doc is None:
+            continue
+        if survivor is not None:
+            if (doc.observer, doc.observed) != (survivor.observer, survivor.observed):
+                raise ValidationException(
+                    "A conclusion may only be absorbed into a survivor in its own collection"
+                )
+            count_before = survivor.times_derived
+            survivor.times_derived = count_before + doc.times_derived
+            survivor.internal_metadata = {
+                **survivor.internal_metadata,
+                "absorbed": [
+                    *survivor.internal_metadata.get("absorbed", []),
+                    {
+                        "document_id": doc.id,
+                        "content": doc.content,
+                        "times_derived": doc.times_derived,
+                        "admission": doc.internal_metadata.get("admission"),
+                        "session_name": doc.session_name,
+                        "category": removal.category,
+                        "reason": removal.reason,
+                        "absorbed_at": removed_at.isoformat(),
+                        "agent_trace_id": removal.agent_trace_id,
+                        "agent_model": removal.agent_model,
+                        "survivor_count_before": count_before,
+                        "survivor_count_after": survivor.times_derived,
+                    },
+                ],
+            }
+        doc.internal_metadata = {**doc.internal_metadata, "removal": envelope}
+        doc.deleted_at = removed_at
+        retired.append((doc.id, doc.level))
+
+    await db.flush()
+    return retired
+
+
 async def delete_document(
     db: AsyncSession,
     workspace_name: str,
     document_id: str,
     *,
+    removal: schemas.ConclusionRemoval,
     observer: str,
     observed: str,
     session_name: str | None = None,
 ) -> None:
+    """Retire one conclusion, scoped to its collection and optionally its session.
+
+    Raises ResourceNotFoundException when nothing live matches.
     """
-    Soft-delete a document by ID.
-
-    Sets deleted_at timestamp to mark the document as deleted. The reconciliation
-    job handles vector store cleanup and hard deletion from the database.
-
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-        document_id: ID of the document to delete
-        observer: Name of the observing peer (for authorization)
-        observed: Name of the observed peer (for authorization)
-        session_name: Optional session name to verify document belongs to session
-
-    Raises:
-        ResourceNotFoundException: If document not found or doesn't match criteria
-    """
-    conditions = [
-        models.Document.id == document_id,
-        models.Document.workspace_name == workspace_name,
-        models.Document.observer == observer,
-        models.Document.observed == observed,
-        models.Document.deleted_at.is_(None),
-    ]
-    if session_name is not None:
-        conditions.append(models.Document.session_name == session_name)
-
-    update_stmt = (
-        update(models.Document).where(*conditions).values(deleted_at=func.now())
+    retired = await soft_delete_documents(
+        db,
+        workspace_name,
+        [document_id],
+        removal=removal,
+        observer=observer,
+        observed=observed,
+        session_name=session_name,
     )
-    result = cast(CursorResult[Any], await db.execute(update_stmt))
-
-    if result.rowcount == 0:
+    if not retired:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to the specified collection/session"
         )
@@ -966,74 +1042,46 @@ async def delete_documents(
     workspace_name: str,
     document_ids: Sequence[str],
     *,
+    removal: schemas.ConclusionRemoval,
     observer: str,
     observed: str,
     session_name: str | None = None,
 ) -> list[tuple[str, str]]:
+    """Retire several conclusions, returning (id, level) for the rows that were live.
+
+    IDs that matched nothing are silently skipped; callers diff against the input.
     """
-    Soft-delete multiple documents in a single UPDATE ... RETURNING statement.
-
-    Returns (id, level) tuples for rows that actually got deleted — i.e. rows
-    that matched the workspace/observer/observed filter and were not already
-    soft-deleted. IDs that didn't match are silently skipped; callers can diff
-    the returned ids against the input to detect misses.
-    """
-    if not document_ids:
-        return []
-
-    conditions = [
-        models.Document.id.in_(document_ids),
-        models.Document.workspace_name == workspace_name,
-        models.Document.observer == observer,
-        models.Document.observed == observed,
-        models.Document.deleted_at.is_(None),
-    ]
-    if session_name is not None:
-        conditions.append(models.Document.session_name == session_name)
-
-    stmt = (
-        update(models.Document)
-        .where(*conditions)
-        .values(deleted_at=func.now())
-        .returning(models.Document.id, models.Document.level)
+    retired = await soft_delete_documents(
+        db,
+        workspace_name,
+        document_ids,
+        removal=removal,
+        observer=observer,
+        observed=observed,
+        session_name=session_name,
     )
-    result = await db.execute(stmt)
-    rows = result.all()
     await db.commit()
-    return [(row.id, row.level) for row in rows]
+    return retired
 
 
 async def delete_document_by_id(
     db: AsyncSession,
     workspace_name: str,
     document_id: str,
+    *,
+    removal: schemas.ConclusionRemoval,
 ) -> None:
+    """Retire one conclusion by id, scoped only to its workspace.
+
+    Raises ResourceNotFoundException when nothing live matches.
     """
-    Soft-delete a document by ID and workspace.
-
-    Sets deleted_at timestamp to mark the document as deleted. The reconciliation
-    job handles vector store cleanup and hard deletion from the database.
-
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-        document_id: ID of the document to delete
-
-    Raises:
-        ResourceNotFoundException: If document not found or doesn't belong to the workspace
-    """
-    update_stmt = (
-        update(models.Document)
-        .where(
-            models.Document.id == document_id,
-            models.Document.workspace_name == workspace_name,
-            models.Document.deleted_at.is_(None),
-        )
-        .values(deleted_at=func.now())
+    retired = await soft_delete_documents(
+        db,
+        workspace_name,
+        [document_id],
+        removal=removal,
     )
-    result = cast(CursorResult[Any], await db.execute(update_stmt))
-
-    if result.rowcount == 0:
+    if not retired:
         raise ResourceNotFoundException(
             f"Document {document_id} not found or does not belong to workspace {workspace_name}"
         )
@@ -1046,7 +1094,11 @@ async def _validate_admission_references(
     workspace_name: str,
     observations: Sequence[schemas.ConclusionCreate],
 ) -> None:
-    """Verify that every claimed search and source reference exists in scope."""
+    """Verify that every claimed search and source reference exists in scope.
+
+    A search receipt is history and may name a retired conclusion; the evidence a
+    derived conclusion rests on must still be live, as must an enrichment target.
+    """
     for obs in observations:
         if obs.searched_conclusion_ids:
             result = await db.execute(
@@ -1055,13 +1107,12 @@ async def _validate_admission_references(
                     models.Document.observer == obs.observer_id,
                     models.Document.observed == obs.observed_id,
                     models.Document.id.in_(obs.searched_conclusion_ids),
-                    models.Document.deleted_at.is_(None),
                 )
             )
             found = set(result.scalars().all())
             if set(obs.searched_conclusion_ids) - found:
                 raise ValidationException(
-                    "searched_conclusion_ids contain missing, retired, or out-of-scope conclusions"
+                    "searched_conclusion_ids contain missing or out-of-scope conclusions"
                 )
 
         if obs.source_ids:
@@ -1071,12 +1122,13 @@ async def _validate_admission_references(
                     models.Document.observer == obs.observer_id,
                     models.Document.observed == obs.observed_id,
                     models.Document.id.in_(obs.source_ids),
+                    models.Document.deleted_at.is_(None),
                 )
             )
             found = set(result.scalars().all())
             if set(obs.source_ids) - found:
                 raise ValidationException(
-                    "source_ids contain missing or out-of-scope conclusions"
+                    "source_ids contain missing, retired, or out-of-scope conclusions"
                 )
 
         if obs.source_message_ids:
@@ -1205,6 +1257,7 @@ async def create_observations(
                 obs.observer_id,
                 obs.observed_id,
                 [obs.target_id],
+                for_update=True,
             )
             if not previous_documents:
                 raise ResourceNotFoundException(
@@ -1213,6 +1266,8 @@ async def create_observations(
         previous = previous_documents[0] if previous_documents else None
         previous_metadata = previous.internal_metadata if previous else {}
         admission_history = list(previous_metadata.get("admission_history", []))
+        absorbed = list(previous_metadata.get("absorbed", []))
+        times_derived = obs.times_derived or 1
         if previous:
             admission_history.append(
                 {
@@ -1225,10 +1280,9 @@ async def create_observations(
                     "created_at": previous.created_at.isoformat(),
                 }
             )
-        # TODO(DEFERRED): enrichment resets the reinforcement count. Plan A in
-        # PLAN-reinforcement.md: write max(previous.times_derived + 1, obs.times_derived or 1)
-        # instead, since an admitted enrich is a re-derivation the agent searched for and
-        # justified. The predecessor's count currently reaches admission_history and stops.
+            # An admitted enrich is a re-derivation the agent searched for and justified,
+            # so a replacement never carries less than its predecessor earned.
+            times_derived = max(previous.times_derived + 1, times_derived)
         internal_metadata = {
             "message_ids": obs.source_message_ids,
             "premises": obs.premises or None,
@@ -1254,12 +1308,9 @@ async def create_observations(
                 "supersedes_id": obs.target_id,
             },
             "admission_history": admission_history,
+            "absorbed": absorbed,
         }
         source_ids = obs.source_ids or None
-        # TODO(DEFERRED): an admitted create whose normalized content equals a live
-        # conclusion in this collection should reinforce that row rather than insert a twin.
-        # Identity, not similarity -- no threshold, nothing discarded. Plan B in
-        # PLAN-reinforcement.md.
         if store_embeddings_in_postgres:
             doc = models.Document(
                 workspace_name=workspace_name,
@@ -1267,7 +1318,7 @@ async def create_observations(
                 observed=obs.observed_id,
                 content=obs.content,
                 level=obs.level,
-                times_derived=obs.times_derived or 1,
+                times_derived=times_derived,
                 source_ids=source_ids,
                 internal_metadata=internal_metadata,
                 session_name=obs.session_id,
@@ -1280,7 +1331,7 @@ async def create_observations(
                 observed=obs.observed_id,
                 content=obs.content,
                 level=obs.level,
-                times_derived=obs.times_derived or 1,
+                times_derived=times_derived,
                 source_ids=source_ids,
                 internal_metadata=internal_metadata,
                 session_name=obs.session_id,
@@ -1306,22 +1357,21 @@ async def create_observations(
                 grouped_targets.setdefault(
                     (obs.observer_id, obs.observed_id), []
                 ).append(obs.target_id)
+        enrichment_removal = schemas.ConclusionRemoval(
+            category="superseded_by_enrichment",
+            reason="An admitted enrichment replaced this conclusion with a newer formulation.",
+            entry_origin="system",
+        )
         for (observer, observed), scoped_target_ids in grouped_targets.items():
-            result = cast(
-                CursorResult[Any],
-                await db.execute(
-                    update(models.Document)
-                    .where(
-                        models.Document.id.in_(scoped_target_ids),
-                        models.Document.workspace_name == workspace_name,
-                        models.Document.observer == observer,
-                        models.Document.observed == observed,
-                        models.Document.deleted_at.is_(None),
-                    )
-                    .values(deleted_at=func.now())
-                ),
+            retired = await soft_delete_documents(
+                db,
+                workspace_name,
+                scoped_target_ids,
+                removal=enrichment_removal,
+                observer=observer,
+                observed=observed,
             )
-            if result.rowcount != len(scoped_target_ids):
+            if len(retired) != len(scoped_target_ids):
                 raise ValidationException(
                     "Enrichment target changed during admission; search again before writing"
                 )
@@ -1508,8 +1558,8 @@ async def _apply_document_row_updates(
         .execution_options(populate_existing=True)
     )
     locked = {doc.id: doc for doc in result.scalars()}
-    now = datetime.datetime.now(datetime.UTC)
     fallbacks: list[schemas.DocumentCreate] = []
+    replaced_ids: list[str] = []
     stale_at_lock = {
         op.document_id
         for op in ops
@@ -1520,7 +1570,7 @@ async def _apply_document_row_updates(
         row = locked.get(op.document_id)
         if op.kind == "replace":
             if row is not None and row.deleted_at is None:
-                row.deleted_at = now
+                replaced_ids.append(row.id)
             continue
         # reinforce
         if op.document_id in stale_at_lock:
@@ -1531,6 +1581,19 @@ async def _apply_document_row_updates(
             # An earlier op in this batch replaced this row.
             continue
         row.times_derived = max(row.times_derived + 1, op.incoming_times_derived)
+    if replaced_ids:
+        await soft_delete_documents(
+            db,
+            workspace_name,
+            replaced_ids,
+            removal=schemas.ConclusionRemoval(
+                category="semantic_dup_replaced",
+                reason="A semantically equivalent document replaced this one.",
+                entry_origin="system",
+            ),
+            observer=observer,
+            observed=observed,
+        )
     await db.flush()
     return fallbacks
 
@@ -1624,8 +1687,18 @@ async def is_rejected_duplicate(
             existing_doc.content,
         )
         doc.times_derived = max(doc.times_derived, existing_doc.times_derived + 1)
-        existing_doc.deleted_at = datetime.datetime.now(datetime.UTC)
-        await db.flush()
+        await soft_delete_documents(
+            db,
+            workspace_name,
+            [existing_doc.id],
+            removal=schemas.ConclusionRemoval(
+                category="semantic_dup_replaced",
+                reason="A semantically equivalent document replaced this one.",
+                entry_origin="system",
+            ),
+            observer=observer,
+            observed=observed,
+        )
         return result
     existing_doc.times_derived = func.greatest(
         models.Document.times_derived + 1,
@@ -1646,33 +1719,21 @@ async def cleanup_soft_deleted_documents(
     batch_size: int = 100,
     older_than_minutes: int = 5,
 ) -> int:
-    """
-    Cleanup soft-deleted documents by removing their vectors and database records.
+    """Drop the vectors of retired documents from the external store, keeping the rows.
 
-    This function implements a two-phase cleanup process for documents that have been
-    soft-deleted (deleted_at is not NULL)
-
-    Args:
-        db: Database session for executing queries
-        external_vector_store: External vector store instance for deleting vectors
-        batch_size: Maximum number of documents to process per call (default 100)
-        older_than_minutes: Only process documents soft-deleted more than this many
-            minutes ago (default 5).
-
-    Returns:
-        Count of documents cleaned up (only those where vector deletion succeeded).
+    A retired row holds the ledger, so only its vector is reclaimed; the row is marked
+    ``sync_state='purged'`` so a later cycle does not re-select work already done.
+    FOR UPDATE SKIP LOCKED keeps concurrent reconcilers off the same batch.
     """
     cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         minutes=older_than_minutes
     )
 
-    # Find soft-deleted documents ready for cleanup
-    # Use FOR UPDATE SKIP LOCKED to prevent multiple deriver instances from
-    # processing the same documents simultaneously
     stmt = (
         select(models.Document)
         .where(models.Document.deleted_at.is_not(None))
         .where(models.Document.deleted_at < cutoff)
+        .where(models.Document.sync_state != "purged")
         .limit(batch_size)
         .with_for_update(skip_locked=True)
     )
@@ -1704,21 +1765,19 @@ async def cleanup_soft_deleted_documents(
             # Log but continue - vectors may already be deleted or namespace may not exist
             logger.warning(f"Failed to delete vectors from {namespace}: {e}")
 
-    # Only hard delete documents where vector deletion succeeded
     if successfully_deleted_ids:
         await db.execute(
-            delete(models.Document).where(
-                models.Document.id.in_(successfully_deleted_ids)
-            )
+            update(models.Document)
+            .where(models.Document.id.in_(successfully_deleted_ids))
+            .values(sync_state="purged")
         )
         await db.commit()
         logger.debug(
-            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents"
+            f"Purged vectors for {len(successfully_deleted_ids)} retired documents"
         )
         return len(successfully_deleted_ids)
 
-    # No documents were successfully deleted from vector store
-    # Release FOR UPDATE locks by rolling back the transaction
+    # Release FOR UPDATE locks when no namespace succeeded.
     await db.rollback()
     return 0
 
@@ -1753,6 +1812,21 @@ async def get_documents_by_ids(
     )
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+async def get_document(
+    db: AsyncSession,
+    workspace_name: str,
+    document_id: str,
+) -> models.Document | None:
+    """Fetch one document by id, unfiltered. Retired rows keep their ledger and return here."""
+    result = await db.execute(
+        select(models.Document).where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.id == document_id,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_child_observations(

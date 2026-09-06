@@ -57,9 +57,7 @@ async def test_observation_create_single(
 
         # Create a single observation
         created = await obs_scope.aio.create(
-            [
-                _operator_conclusion("User prefers dark mode", session.id)
-            ]
+            [_operator_conclusion("User prefers dark mode", session.id)]
         )
 
         assert len(created) == 1
@@ -71,7 +69,7 @@ async def test_observation_create_single(
         assert created[0].id  # Has an ID
         assert created[0].admission["entry_origin"] == "operator_sdk"
         assert created[0].admission["search_query"] == "User prefers dark mode"
-        assert created[0].admission_history == []
+        assert created[0].removal is None
     else:
         observer = honcho_client.peer(id="test-obs-create-single-observer")
         target = honcho_client.peer(id="test-obs-create-single-target")
@@ -91,9 +89,7 @@ async def test_observation_create_single(
 
         # Create a single observation
         created = obs_scope.create(
-            [
-                _operator_conclusion("User prefers dark mode", session.id)
-            ]
+            [_operator_conclusion("User prefers dark mode", session.id)]
         )
 
         assert len(created) == 1
@@ -105,7 +101,7 @@ async def test_observation_create_single(
         assert created[0].id  # Has an ID
         assert created[0].admission["entry_origin"] == "operator_sdk"
         assert created[0].admission["search_query"] == "User prefers dark mode"
-        assert created[0].admission_history == []
+        assert created[0].removal is None
 
 
 @pytest.mark.asyncio
@@ -369,13 +365,25 @@ async def test_observation_create_then_delete(
 
         observation_id = created[0].id
 
-        # Delete the observation
-        await obs_scope.aio.delete(observation_id)
+        # Retire the observation
+        await obs_scope.aio.delete(
+            observation_id,
+            category="misderived",
+            reason="The test retired this conclusion",
+            agent_trace_id="test-trace",
+            agent_model="test-model",
+        )
 
-        # List observations - should not contain deleted one
+        # List observations - should not contain the retired one
         listed = await obs_scope.aio.list()
         listed_ids = {obs.id for obs in listed.items}
         assert observation_id not in listed_ids
+
+        # It is still readable with include_deleted, carrying why it went
+        retired = await obs_scope.aio.list(include_deleted=True)
+        retired_row = next(obs for obs in retired.items if obs.id == observation_id)
+        assert retired_row.removal["category"] == "misderived"
+        assert retired_row.deleted_at is not None
     else:
         observer = honcho_client.peer(id="test-obs-create-delete-observer")
         target = honcho_client.peer(id="test-obs-create-delete-target")
@@ -399,13 +407,28 @@ async def test_observation_create_then_delete(
 
         observation_id = created[0].id
 
-        # Delete the observation
-        obs_scope.delete(observation_id)
+        # Retire the observation
+        obs_scope.delete(
+            observation_id,
+            category="misderived",
+            reason="The test retired this conclusion",
+            agent_trace_id="test-trace",
+            agent_model="test-model",
+        )
 
-        # List observations - should not contain deleted one
+        # List observations - should not contain the retired one
         listed = obs_scope.list()
         listed_ids = {obs.id for obs in listed}
         assert observation_id not in listed_ids
+
+        # It is still readable with include_deleted, carrying why it went
+        retired_row = next(
+            obs
+            for obs in obs_scope.list(include_deleted=True)
+            if obs.id == observation_id
+        )
+        assert retired_row.removal["category"] == "misderived"
+        assert retired_row.deleted_at is not None
 
 
 @pytest.mark.asyncio
@@ -536,12 +559,8 @@ async def test_observation_create_with_session_filter(
         obs_scope = observer.conclusions_of(target)
 
         # Create observations in different sessions
-        obs_scope.create(
-            [_operator_conclusion("Session 1 observation", session1.id)]
-        )
-        obs_scope.create(
-            [_operator_conclusion("Session 2 observation", session2.id)]
-        )
+        obs_scope.create([_operator_conclusion("Session 1 observation", session1.id)])
+        obs_scope.create([_operator_conclusion("Session 2 observation", session2.id)])
 
         # List filtered by session1
         s1_obs = obs_scope.list(session=session1)
@@ -642,9 +661,7 @@ async def test_observation_create_without_session_id(
 
         # Create observation WITHOUT session_id
         created = await obs_scope.aio.create(
-            [
-                _operator_conclusion("Global observation without session")
-            ]
+            [_operator_conclusion("Global observation without session")]
         )
 
         assert len(created) == 1
@@ -656,7 +673,7 @@ async def test_observation_create_without_session_id(
         assert created[0].id  # Has an ID
         assert created[0].admission["entry_origin"] == "operator_sdk"
         assert created[0].admission["search_query"] == created[0].content
-        assert created[0].admission_history == []
+        assert created[0].removal is None
     else:
         observer = honcho_client.peer(id="test-obs-no-session-observer")
         target = honcho_client.peer(id="test-obs-no-session-target")
@@ -675,9 +692,7 @@ async def test_observation_create_without_session_id(
 
         # Create observation WITHOUT session_id
         created = obs_scope.create(
-            [
-                _operator_conclusion("Global observation without session")
-            ]
+            [_operator_conclusion("Global observation without session")]
         )
 
         assert len(created) == 1
@@ -689,7 +704,7 @@ async def test_observation_create_without_session_id(
         assert created[0].id  # Has an ID
         assert created[0].admission["entry_origin"] == "operator_sdk"
         assert created[0].admission["search_query"] == created[0].content
-        assert created[0].admission_history == []
+        assert created[0].removal is None
 
 
 @pytest.mark.asyncio

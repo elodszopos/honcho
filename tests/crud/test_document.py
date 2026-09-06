@@ -15,6 +15,20 @@ from src.crud.document import SemanticRejectionResult, is_rejected_duplicate
 from src.exceptions import ResourceNotFoundException
 
 
+def _removal(
+    category: str = "misderived", **overrides: Any
+) -> schemas.ConclusionRemoval:
+    fields: dict[str, Any] = {
+        "category": category,
+        "reason": "The test retired this conclusion",
+        "entry_origin": "operator_sdk",
+        "agent_trace_id": "test-trace",
+        "agent_model": "test-model",
+    }
+    fields.update(overrides)
+    return schemas.ConclusionRemoval(**fields)
+
+
 class TestDocumentCRUD:
     """Test suite for document CRUD operations"""
 
@@ -335,6 +349,61 @@ class TestDocumentCRUD:
         assert contents[0] == "hot"
         # Ties break toward most-recent, not oldest-inserted.
         assert contents[1:] == ["tie 2", "tie 1", "tie 0"]
+
+    @pytest.mark.asyncio
+    async def test_absorption_promotes_the_survivor_in_most_derived_recall(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """The point of moving the count: the survivor outranks what it absorbed into it."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        def _doc(content: str, times_derived: int) -> models.Document:
+            return models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                content=content,
+                session_name=test_session.name,
+                times_derived=times_derived,
+            )
+
+        survivor = _doc("The user keeps bees", 2)
+        duplicate = _doc("The user is a beekeeper", 3)
+        rival = _doc("The user cycles to work", 4)
+        db_session.add_all([survivor, duplicate, rival])
+        await db_session.flush()
+
+        await crud.soft_delete_documents(
+            db_session,
+            test_workspace.name,
+            [duplicate.id],
+            removal=_removal(
+                "duplicate_absorbed",
+                reason="The survivor states this more fully",
+                absorbed_into=survivor.id,
+            ),
+        )
+
+        docs = await crud.query_documents_most_derived(
+            db_session,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            limit=10,
+        )
+
+        # The absorbed row is gone from recall; its derivations now rank the survivor
+        # above a rival that used to outrank both of them.
+        assert [d.content for d in docs] == [
+            "The user keeps bees",
+            "The user cycles to work",
+        ]
+        assert docs[0].times_derived == 5
 
     @pytest.mark.asyncio
     async def test_duplicate_rejection_reinforces_existing(
@@ -915,6 +984,7 @@ class TestDocumentCRUD:
             db_session,
             workspace_name=test_workspace.name,
             document_id=doc_id,
+            removal=_removal(),
             observer=test_peer.name,
             observed=test_peer2.name,
         )
@@ -943,6 +1013,7 @@ class TestDocumentCRUD:
                 db_session,
                 workspace_name=test_workspace.name,
                 document_id="nonexistent_id",
+                removal=_removal(),
                 observer=test_peer.name,
                 observed=test_peer2.name,
             )

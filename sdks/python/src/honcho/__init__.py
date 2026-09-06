@@ -50,7 +50,7 @@ from .api_types import (
 )
 from .base import PeerBase, ScopeBase, SessionBase
 from .client import Honcho
-from .conclusions import Conclusion, ConclusionsView
+from .conclusions import Conclusion, ConclusionLineage, ConclusionsView
 from .http.exceptions import (
     APIError,
     AuthenticationError,
@@ -107,6 +107,7 @@ __all__ = [
     "Honcho",
     # Domain classes
     "Conclusion",
+    "ConclusionLineage",
     "ConclusionsView",
     "Message",
     "MessageCreateParams",

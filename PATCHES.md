@@ -34,8 +34,13 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 - `create_documents` as a write path. The deriver, the conclusion route and the agent tools
   all admit through `create_observations`. Upstream's version decides create, merge and
   discard from a cosine threshold with no recorded reason, which the admission contract
-  exists to prevent. Its exact-content reinforcement went with it; `PLAN-reinforcement.md`
-  covers restoring that half without the threshold.
+  exists to prevent. Its exact-content reinforcement went with it and is not restored: the
+  live pool holds zero exact-content collisions, even ignoring the session key.
+- The soft-delete reapers. `_cleanup_soft_deleted_documents_pgvector` and its reconciler batch
+  are dropped outright, and `cleanup_soft_deleted_documents` drops the external vector but keeps
+  the row, marking it `sync_state='purged'` so the eligibility query does not re-select it. A
+  retired conclusion carries the removal ledger; hard-deleting it destroys the record of why it
+  went. Upstream will keep maintaining both, and every merge that touches them re-decides this.
 - `CreateDocumentsResult` as the return of `save_representation`. A count is reported instead,
   so an empty save stays falsy where the deriver tallies successful observers. Asserted in
   `tests/test_fork_held_values.py`.

@@ -6,6 +6,7 @@ export { Honcho } from './client'
 export {
   Conclusion,
   type ConclusionCreateParams,
+  ConclusionLineage,
   /**
    * @deprecated Renamed to `ConclusionsView`. "Scope" now means a named set of
    * sessions (see `Scope`), which this class is not — it is a view over one
@@ -53,8 +54,11 @@ export {
 // API types (snake_case, for advanced usage)
 export type {
   ConclusionLevel,
+  ConclusionLineageResponse,
   ConclusionQueryParams,
+  ConclusionRemovalParams,
   ConclusionResponse,
+  RemovalCategory,
   MessageResponse,
   PageResponse,
   PeerContextResponse,

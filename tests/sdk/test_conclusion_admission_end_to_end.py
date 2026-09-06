@@ -97,8 +97,36 @@ async def test_public_sdk_search_create_enrich_levels_and_history(
         enriched = scope.create([enrichment])
 
     assert enriched[0].admission["supersedes_id"] == original.id
-    assert enriched[0].admission_history[-1]["document_id"] == original.id
-    assert enriched[0].admission_history[-1]["content"] == original.content
+
+    if client_type == "async":
+        lineage = await scope.aio.lineage(enriched[0].id)
+        retired = await scope.aio.lineage(original.id)
+    else:
+        lineage = scope.lineage(enriched[0].id)
+        retired = scope.lineage(original.id)
+    assert lineage.admission_history[-1]["document_id"] == original.id
+    assert lineage.admission_history[-1]["content"] == original.content
+    assert retired.removal["category"] == "superseded_by_enrichment"
+
+    # An induction needs two independent live sources. A retired revision and the
+    # replacement that superseded it are one memory, and the retired half is evidence
+    # the store no longer stands behind.
+    second_source = ConclusionCreateParams(
+        content="The user schedules focus blocks first thing in the morning.",
+        session_id=session.id,
+        action="create",
+        reason_for_entry="Second independent observation for the inductive pattern.",
+        search_query="morning focus blocks",
+        searched_conclusion_ids=[],
+        source_tool_call_id="integration-tool-second-source",
+        entry_origin="explicit_agent",
+        agent_trace_id=f"explicit-trace-2-{suffix}",
+        agent_model="integration-test-model",
+    )
+    if client_type == "async":
+        supporting = await scope.aio.create([second_source])
+    else:
+        supporting = scope.create([second_source])
 
     dreamer_batch = [
         ConclusionCreateParams(
@@ -121,7 +149,7 @@ async def test_public_sdk_search_create_enrich_levels_and_history(
             reason_for_entry="Novel temporal pattern after semantic candidate review.",
             search_query="morning focus work pattern",
             searched_conclusion_ids=[],
-            source_ids=[original.id, enriched[0].id],
+            source_ids=[enriched[0].id, supporting[0].id],
             sources=["Focus block at 07:00", "Focus block at 08:00"],
             pattern_type="tendency",
             confidence="high",

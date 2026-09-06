@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## The Memory System Is One Unit, Across Three Roots
+
+Honcho work is never only this repo. The server, its clients and its doctrine ship together;
+a contract changed in one root and not the others is a broken feature, not a phased rollout.
+
+| Root | Holds |
+|---|---|
+| `~/Projects/honcho/` | server, routers, crud, schemas, MCP server, both SDKs |
+| `~/.hermes/hermes-agent/plugins/memory/honcho/` | the tool the agent actually calls: `hermes_memory.py` (schema + handler), `session.py` (wrapper), `client.py`, `cli.py`, `audit.py` (local mutation log) |
+| `~/.hermes/skills/productivity/memory-honcho-steward/` | janitor and synthesist doctrine — the prompts that drive every steward write |
+
+**Trace inward from the caller, never outward from the server.** The steward reaches Honcho
+through the plugin's `honcho_conclusions` tool and the Python SDK — not through the MCP server.
+A change to the MCP tool alone reaches nothing the steward does. Before designing any contract
+change, find every caller in all three roots and list them; database evidence about who wrote a
+row is not proof of which code path wrote it.
+
+Scope, plan and commit all three together.
+
 ## Agent Writing Contract
 
 - Read `$HOME/.hermes/hermes-agent/agent/agent-writing-contract.md` first.

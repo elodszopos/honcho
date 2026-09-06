@@ -593,9 +593,6 @@ async def process_representation_tasks_batch(
             was_flush_enabled=was_flush_enabled,
             hit_batch_token_cap=hit_batch_token_cap,
             hit_input_token_cap=hit_input_token_cap,
-            # TODO(DEFERRED): the four dedup counters on this event stay at their schema
-            # default because the admission path never dedups. Plan B in
-            # PLAN-reinforcement.md would give exact_dup_existing_count a real value.
             observer_count=successful_observer_count,
             failed_observer_count=len(save_errors),
         )

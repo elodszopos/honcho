@@ -4,6 +4,8 @@ import { Page } from './pagination'
 import type { Session } from './session'
 import type {
   ConclusionLevel,
+  ConclusionLineageResponse,
+  ConclusionRemovalParams,
   ConclusionResponse,
   PageResponse,
   RepresentationOptions,
@@ -107,9 +109,11 @@ export class Conclusion {
    */
   readonly level: ConclusionLevel
   readonly admission: Record<string, unknown>
-  readonly admissionHistory: Array<Record<string, unknown>>
+  /** Why this conclusion was retired, or null while it is live. */
+  readonly removal: Record<string, unknown> | null
   readonly timesDerived: number
   readonly createdAt: string
+  readonly deletedAt: string | null
 
   constructor(
     id: string,
@@ -120,8 +124,9 @@ export class Conclusion {
     createdAt: string,
     level: ConclusionLevel = 'explicit',
     admission: Record<string, unknown> = {},
-    admissionHistory: Array<Record<string, unknown>> = [],
-    timesDerived: number = 1
+    removal: Record<string, unknown> | null = null,
+    timesDerived: number = 1,
+    deletedAt: string | null = null
   ) {
     this.id = id
     this.content = content
@@ -130,9 +135,10 @@ export class Conclusion {
     this.sessionId = sessionId
     this.level = level
     this.admission = admission
-    this.admissionHistory = admissionHistory
+    this.removal = removal
     this.timesDerived = timesDerived
     this.createdAt = createdAt
+    this.deletedAt = deletedAt
   }
 
   static fromApiResponse(data: ConclusionResponse): Conclusion {
@@ -145,8 +151,9 @@ export class Conclusion {
       data.created_at,
       data.level,
       data.admission,
-      data.admission_history,
-      data.times_derived
+      data.removal,
+      data.times_derived,
+      data.deleted_at
     )
   }
 
@@ -156,6 +163,44 @@ export class Conclusion {
         ? `${this.content.slice(0, 50)}...`
         : this.content
     return `Conclusion(id='${this.id}', content='${truncatedContent}')`
+  }
+}
+
+/** A conclusion with its full ledger: prior formulations and absorptions. */
+export class ConclusionLineage extends Conclusion {
+  readonly admissionHistory: Array<Record<string, unknown>>
+  readonly absorbed: Array<Record<string, unknown>>
+
+  constructor(
+    base: Conclusion,
+    admissionHistory: Array<Record<string, unknown>> = [],
+    absorbed: Array<Record<string, unknown>> = []
+  ) {
+    super(
+      base.id,
+      base.content,
+      base.observerId,
+      base.observedId,
+      base.sessionId,
+      base.createdAt,
+      base.level,
+      base.admission,
+      base.removal,
+      base.timesDerived,
+      base.deletedAt
+    )
+    this.admissionHistory = admissionHistory
+    this.absorbed = absorbed
+  }
+
+  static fromLineageResponse(
+    data: ConclusionLineageResponse
+  ): ConclusionLineage {
+    return new ConclusionLineage(
+      Conclusion.fromApiResponse(data),
+      data.admission_history,
+      data.absorbed
+    )
   }
 }
 
@@ -192,6 +237,7 @@ export class ConclusionsView {
     page?: number
     size?: number
     reverse?: boolean
+    includeDeleted?: boolean
   }): Promise<PageResponse<ConclusionResponse>> {
     await this._ensureWorkspace()
     return this._http.post<PageResponse<ConclusionResponse>>(
@@ -202,6 +248,7 @@ export class ConclusionsView {
           page: params.page,
           size: params.size,
           reverse: params.reverse ? 'true' : undefined,
+          include_deleted: params.includeDeleted ? 'true' : undefined,
         },
       }
     )
@@ -230,10 +277,23 @@ export class ConclusionsView {
     )
   }
 
-  private async _delete(conclusionId: string): Promise<void> {
+  private async _delete(
+    conclusionId: string,
+    removal: ConclusionRemovalParams
+  ): Promise<void> {
     await this._ensureWorkspace()
     await this._http.delete(
-      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}`
+      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}`,
+      { body: removal }
+    )
+  }
+
+  private async _lineage(
+    conclusionId: string
+  ): Promise<ConclusionLineageResponse> {
+    await this._ensureWorkspace()
+    return this._http.get<ConclusionLineageResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}/lineage`
     )
   }
 
@@ -280,6 +340,8 @@ export class ConclusionsView {
     session?: string | Session
     filters?: Record<string, unknown>
     reverse?: boolean
+    /** Include retired conclusions, each carrying the reason it was removed. */
+    includeDeleted?: boolean
   }): Promise<Page<Conclusion, ConclusionResponse>> {
     rejectReservedFilterKeys(options?.filters, [
       ...VIEW_RESERVED_KEYS,
@@ -298,19 +360,21 @@ export class ConclusionsView {
       ...options?.filters,
     }
     const reverse = options?.reverse
+    const includeDeleted = options?.includeDeleted
 
     const response = await this._list({
       filters,
       page: options?.page ?? 1,
       size: options?.size ?? 50,
       reverse,
+      includeDeleted,
     })
 
     const fetchNextPage = async (
       page: number,
       size: number
     ): Promise<PageResponse<ConclusionResponse>> => {
-      return this._list({ filters, page, size, reverse })
+      return this._list({ filters, page, size, reverse, includeDeleted })
     }
 
     return new Page(
@@ -354,10 +418,40 @@ export class ConclusionsView {
   }
 
   /**
-   * Delete a conclusion by ID.
+   * Retire a conclusion by ID, recording why.
+   *
+   * The row and its ledger are kept; the conclusion stops being returned by search
+   * and stops reaching any deriving agent. Use `duplicate_absorbed` with
+   * `absorbed_into` when another conclusion carries the memory, so its derivation
+   * count moves with it.
    */
-  async delete(conclusionId: string): Promise<void> {
-    await this._delete(conclusionId)
+  async delete(
+    conclusionId: string,
+    removal: ConclusionRemovalParams
+  ): Promise<void> {
+    if (removal.category === 'duplicate_absorbed' && !removal.absorbed_into) {
+      throw new Error('duplicate_absorbed requires absorbed_into')
+    }
+    if (removal.category !== 'duplicate_absorbed' && removal.absorbed_into) {
+      throw new Error('absorbed_into is only valid for duplicate_absorbed')
+    }
+    await this._delete(conclusionId, {
+      entry_origin: 'operator_sdk',
+      ...removal,
+    })
+  }
+
+  /**
+   * Get one conclusion's full ledger, whether it is live or retired.
+   *
+   * Returns how it was admitted, every prior formulation it was rewritten from,
+   * everything it absorbed with the count each brought, and why it was removed if
+   * it was. Retired conclusions are only reachable here, never through search.
+   */
+  async lineage(conclusionId: string): Promise<ConclusionLineage> {
+    return ConclusionLineage.fromLineageResponse(
+      await this._lineage(conclusionId)
+    )
   }
 
   /** Create or enrich conclusions through the public admission API. */

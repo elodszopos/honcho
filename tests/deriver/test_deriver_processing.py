@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src import crud, models
+from src import models
 from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.deriver.deriver import process_representation_tasks_batch

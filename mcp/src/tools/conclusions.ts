@@ -13,6 +13,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         "List conclusions (facts and observations) that Honcho has derived about a peer (paginated).",
         "Use this to see what Honcho has learned. If no target is given, returns self-conclusions.",
         "Returns conclusion objects with pagination metadata.",
+        "Pass include_deleted to also see retired conclusions and why each was removed.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
@@ -23,15 +24,21 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe(
             "Optional: list conclusions about this target. Omit for self-conclusions.",
           ),
+        include_deleted: z
+          .boolean()
+          .optional()
+          .describe(
+            "Include retired conclusions, each carrying the reason it was removed.",
+          ),
       },
     },
-    async ({ workspace_id, peer_id, target_peer_id }) => {
+    async ({ workspace_id, peer_id, target_peer_id, include_deleted }) => {
       try {
         const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const scope = target_peer_id
           ? peer.conclusionsOf(target_peer_id)
           : peer.conclusions;
-        const page = await scope.list();
+        const page = await scope.list({ includeDeleted: include_deleted });
         return textResult({
           conclusions: page.items.map((c) => ({
             id: c.id,
@@ -41,6 +48,7 @@ export function register(server: McpServer, ctx: ToolContext) {
             session_id: c.sessionId,
             times_derived: c.timesDerived,
             created_at: c.createdAt,
+            ...(c.removal ? { removal: c.removal, deleted_at: c.deletedAt } : {}),
           })),
           total: page.total,
           page: page.page,
@@ -134,6 +142,14 @@ export function register(server: McpServer, ctx: ToolContext) {
             search_query: z.string(),
             searched_conclusion_ids: z.array(z.string()),
             source_message_ids: z.array(z.number().int()).optional(),
+            times_derived: z
+              .number()
+              .int()
+              .min(1)
+              .optional()
+              .describe(
+                "Reinforcement count to carry onto the admitted conclusion. Omit unless consolidating sources whose counts must be preserved.",
+              ),
           }),
         ).describe("Search-backed admission decisions. Search with query_conclusions before writing."),
         agent_trace_id: z.string().describe("Agent run or trace identifier."),
@@ -172,11 +188,17 @@ export function register(server: McpServer, ctx: ToolContext) {
           entryOrigin: "explicit_agent" as const,
           agentTraceId: agent_trace_id,
           agentModel: agent_model,
+          timesDerived: item.times_derived,
         }));
-        await scope.create(params);
-        return textResult(
-          `Created ${conclusions.length} conclusion${conclusions.length === 1 ? "" : "s"} successfully`,
-        );
+        const created = await scope.create(params);
+        return textResult({
+          created: created.length,
+          conclusions: created.map((c) => ({
+            id: c.id,
+            content: c.content,
+            times_derived: c.timesDerived,
+          })),
+        });
       } catch (e) {
         return errorResult(
           `Failed to create conclusions: ${e instanceof Error ? e.message : String(e)}`,
@@ -190,9 +212,11 @@ export function register(server: McpServer, ctx: ToolContext) {
     "delete_conclusion",
     {
       description: [
-        "Delete a specific conclusion by ID.",
+        "Retire a specific conclusion by ID, recording why.",
         "Use query_conclusions or list_conclusions to find the ID first.",
-        "Use this to remove incorrect or outdated knowledge.",
+        "The row is kept with your reason; it stops being returned by search and stops",
+        "reaching any deriving agent. When another conclusion carries the same memory,",
+        "use duplicate_absorbed with absorbed_into so its derivation count moves there.",
       ].join("\n"),
       inputSchema: {
         workspace_id: workspaceIdSchema(ctx),
@@ -200,18 +224,106 @@ export function register(server: McpServer, ctx: ToolContext) {
         target_peer_id: z
           .string()
           .describe("The peer the conclusion is about."),
-        conclusion_id: z.string().describe("The conclusion to delete."),
+        conclusion_id: z.string().describe("The conclusion to retire."),
+        category: z
+          .enum([
+            "duplicate_absorbed",
+            "superseded",
+            "contradicted",
+            "misderived",
+            "out_of_scope",
+            "transient",
+            "low_value",
+          ])
+          .describe(
+            "duplicate_absorbed: folded into another conclusion (requires absorbed_into). superseded: was true, reality changed. contradicted: was never true. misderived: extraction defect. out_of_scope: valid but belongs elsewhere, carrier verified. transient: never durable. low_value: not worth carrying.",
+          ),
+        reason: z
+          .string()
+          .describe(
+            "Specific justification, naming what carries the memory now when something does.",
+          ),
+        absorbed_into: z
+          .string()
+          .optional()
+          .describe(
+            "Required for duplicate_absorbed: the surviving conclusion, which inherits this one's derivation count.",
+          ),
+        agent_trace_id: z.string().describe("Agent run or trace identifier."),
+        agent_model: z
+          .string()
+          .describe("Exact model identifier making the decision."),
+      },
+    },
+    async ({
+      workspace_id,
+      peer_id,
+      target_peer_id,
+      conclusion_id,
+      category,
+      reason,
+      absorbed_into,
+      agent_trace_id,
+      agent_model,
+    }) => {
+      try {
+        const peer = await ctx.clientFor(workspace_id).peer(peer_id);
+        const scope = peer.conclusionsOf(target_peer_id);
+        await scope.delete(conclusion_id, {
+          category,
+          reason,
+          absorbed_into,
+          entry_origin: "explicit_agent",
+          agent_trace_id,
+          agent_model,
+        });
+        return textResult("Conclusion retired successfully");
+      } catch (e) {
+        return errorResult(
+          `Failed to retire conclusion: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+  );
+
+  // ── conclusion_lineage ──────────────────────────────────────────────
+  server.registerTool(
+    "conclusion_lineage",
+    {
+      description: [
+        "Get one conclusion's full ledger, whether it is live or retired.",
+        "Returns how it was admitted, every prior formulation it was rewritten from,",
+        "everything it absorbed with the count each brought, and why it was removed.",
+        "This is the only way to read a retired conclusion; search never returns one.",
+      ].join("\n"),
+      inputSchema: {
+        workspace_id: workspaceIdSchema(ctx),
+        peer_id: z.string().describe("The observer peer."),
+        target_peer_id: z
+          .string()
+          .describe("The peer the conclusion is about."),
+        conclusion_id: z.string().describe("The conclusion to trace."),
       },
     },
     async ({ workspace_id, peer_id, target_peer_id, conclusion_id }) => {
       try {
         const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const scope = peer.conclusionsOf(target_peer_id);
-        await scope.delete(conclusion_id);
-        return textResult("Conclusion deleted successfully");
+        const lineage = await scope.lineage(conclusion_id);
+        return textResult({
+          id: lineage.id,
+          content: lineage.content,
+          times_derived: lineage.timesDerived,
+          created_at: lineage.createdAt,
+          deleted_at: lineage.deletedAt,
+          admission: lineage.admission,
+          removal: lineage.removal,
+          admission_history: lineage.admissionHistory,
+          absorbed: lineage.absorbed,
+        });
       } catch (e) {
         return errorResult(
-          `Failed to delete conclusion: ${e instanceof Error ? e.message : String(e)}`,
+          `Failed to read conclusion lineage: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     },

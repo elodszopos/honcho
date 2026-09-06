@@ -18,6 +18,7 @@ from .document import (
     delete_documents,
     fetch_documents_by_ids,
     get_all_documents,
+    get_document,
     get_child_observations,
     get_documents_by_ids,
     get_documents_with_filters,
@@ -25,6 +26,7 @@ from .document import (
     query_documents_most_derived,
     query_documents_recent,
     query_external_vector_document_ids,
+    soft_delete_documents,
 )
 from .message import (
     create_messages,
@@ -130,6 +132,8 @@ __all__ = [
     "delete_document",
     "delete_document_by_id",
     "delete_documents",
+    "soft_delete_documents",
+    "get_document",
     # Message
     "create_messages",
     "get_messages",

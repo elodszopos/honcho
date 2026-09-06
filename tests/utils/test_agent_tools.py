@@ -427,7 +427,6 @@ class TestCreateObservations:
         assert first.agent_model == "test-model"
         assert first.entry_origin == "deriver_agent"
 
-
     async def test_create_observations_rejects_missing_agent_model(
         self,
         tool_test_data: Any,
@@ -520,6 +519,16 @@ class TestNormalizeObservationId:
 
 
 @pytest.mark.asyncio
+def _delete_input(*, observation_ids: list[str], **overrides: Any) -> dict[str, Any]:
+    tool_input: dict[str, Any] = {
+        "observation_ids": observation_ids,
+        "removal_category": "misderived",
+        "reason_for_removal": "The extraction misread the message",
+    }
+    tool_input.update(overrides)
+    return tool_input
+
+
 class TestDeleteObservations:
     """Tests for _handle_delete_observations."""
 
@@ -534,7 +543,9 @@ class TestDeleteObservations:
         ctx = make_tool_context(include_observation_ids=True)
 
         doc_id = documents[0].id
-        result = await _handle_delete_observations(ctx, {"observation_ids": [doc_id]})
+        result = await _handle_delete_observations(
+            ctx, _delete_input(observation_ids=[doc_id])
+        )
 
         assert "Deleted 1 observations" in result
 
@@ -553,7 +564,7 @@ class TestDeleteObservations:
         ctx = make_tool_context(include_observation_ids=True)
 
         result = await _handle_delete_observations(
-            ctx, {"observation_ids": ["nonexistent_id_12345"]}
+            ctx, _delete_input(observation_ids=["nonexistent_id_12345"])
         )
 
         # Should report 0 deleted (graceful handling)
@@ -624,7 +635,7 @@ class TestDeleteObservations:
         ]
 
         result = await _handle_delete_observations(
-            ctx, {"observation_ids": ids_to_delete}
+            ctx, _delete_input(observation_ids=ids_to_delete)
         )
 
         assert "Deleted 3 observations" in result

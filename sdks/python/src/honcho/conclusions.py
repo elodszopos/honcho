@@ -8,7 +8,14 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
-from .api_types import ConclusionLevel, ConclusionResponse, RepresentationResponse
+from .api_types import (
+    ConclusionLevel,
+    ConclusionLineageResponse,
+    ConclusionRemovalParams,
+    ConclusionResponse,
+    RemovalCategory,
+    RepresentationResponse,
+)
 from .base import SessionBase
 from .http import routes
 from .pagination import SyncPage
@@ -125,8 +132,10 @@ class Conclusion:
             "contradiction"). "explicit" conclusions are extracted directly
             from messages; the others are derived during dreaming.
         times_derived: Number of times this conclusion has been independently
-            derived.
+            derived, including counts inherited from conclusions it absorbed.
+        removal: Why this conclusion was retired, or None while it is live.
         created_at: Timestamp for when the conclusion was created
+        deleted_at: When it was retired, or None while it is live
     """
 
     id: str
@@ -136,9 +145,10 @@ class Conclusion:
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
     admission: dict[str, Any]
-    admission_history: list[dict[str, Any]]
+    removal: dict[str, Any] | None = None
     times_derived: int = 1
     created_at: datetime.datetime
+    deleted_at: datetime.datetime | None = None
 
     def __init__(
         self,
@@ -150,8 +160,9 @@ class Conclusion:
         created_at: datetime.datetime,
         level: ConclusionLevel = "explicit",
         admission: dict[str, Any] | None = None,
-        admission_history: list[dict[str, Any]] | None = None,
+        removal: dict[str, Any] | None = None,
         times_derived: int = 1,
+        deleted_at: datetime.datetime | None = None,
     ) -> None:
         self.id = id
         self.content = content
@@ -160,9 +171,10 @@ class Conclusion:
         self.session_id = session_id
         self.level = level
         self.admission = admission or {}
-        self.admission_history = admission_history or []
+        self.removal = removal
         self.times_derived = times_derived
         self.created_at = created_at
+        self.deleted_at = deleted_at
 
     @classmethod
     def from_api_response(cls, data: ConclusionResponse) -> "Conclusion":
@@ -175,9 +187,49 @@ class Conclusion:
             session_id=data.session_id,
             level=data.level,
             admission=data.admission,
-            admission_history=data.admission_history,
+            removal=data.removal,
             times_derived=data.times_derived,
             created_at=data.created_at,
+            deleted_at=data.deleted_at,
+        )
+
+
+class ConclusionLineage(Conclusion):
+    """A conclusion with its full ledger: prior formulations and absorptions."""
+
+    admission_history: list[dict[str, Any]]
+    absorbed: list[dict[str, Any]]
+
+    def __init__(
+        self,
+        *,
+        admission_history: list[dict[str, Any]] | None = None,
+        absorbed: list[dict[str, Any]] | None = None,
+        **conclusion_fields: Any,
+    ) -> None:
+        super().__init__(**conclusion_fields)
+        self.admission_history = admission_history or []
+        self.absorbed = absorbed or []
+
+    @classmethod
+    def from_lineage_response(
+        cls, data: ConclusionLineageResponse
+    ) -> "ConclusionLineage":
+        """Create a ConclusionLineage from a lineage API response."""
+        return cls(
+            id=data.id,
+            content=data.content,
+            observer_id=data.observer_id,
+            observed_id=data.observed_id,
+            session_id=data.session_id,
+            level=data.level,
+            admission=data.admission,
+            removal=data.removal,
+            times_derived=data.times_derived,
+            created_at=data.created_at,
+            deleted_at=data.deleted_at,
+            admission_history=data.admission_history,
+            absorbed=data.absorbed,
         )
 
     def __repr__(self) -> str:
@@ -270,6 +322,7 @@ class ConclusionsView:
         *,
         filters: dict[str, Any] | None = None,
         reverse: bool = False,
+        include_deleted: bool = False,
     ) -> SyncPage[ConclusionResponse, Conclusion]:
         """
         List conclusions in this scope.
@@ -285,6 +338,8 @@ class ConclusionsView:
                 directly from messages (i.e. not derived during dreaming). See
                 https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
             reverse: If True, reverses the default ordering. Default: False.
+            include_deleted: If True, retired conclusions are included, each carrying
+                the `removal` record saying why it went. Default: False.
 
         Returns:
             Paginated response containing Conclusion objects
@@ -304,6 +359,8 @@ class ConclusionsView:
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
+        if include_deleted:
+            query["include_deleted"] = "true"
         data = self._honcho._http.post(
             routes.conclusions_list(self.workspace_id),
             body={"filters": filters},
@@ -319,6 +376,8 @@ class ConclusionsView:
             next_query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 next_query["reverse"] = "true"
+            if include_deleted:
+                next_query["include_deleted"] = "true"
             next_data = self._honcho._http.post(
                 routes.conclusions_list(self.workspace_id),
                 body={"filters": filters},
@@ -377,15 +436,62 @@ class ConclusionsView:
             for item in data
         ]
 
-    def delete(self, conclusion_id: str) -> None:
+    def delete(
+        self,
+        conclusion_id: str,
+        *,
+        category: RemovalCategory,
+        reason: str,
+        agent_trace_id: str,
+        agent_model: str,
+        absorbed_into: str | None = None,
+        entry_origin: str = "operator_sdk",
+    ) -> None:
         """
-        Delete a conclusion by ID.
+        Retire a conclusion by ID, recording why.
+
+        The row and its ledger are kept; the conclusion stops being returned by search
+        and stops reaching any deriving agent.
 
         Args:
-            conclusion_id: The ID of the conclusion to delete
+            conclusion_id: The ID of the conclusion to retire
+            category: Why it is going. One of api_types.REMOVAL_CATEGORIES
+            reason: Specific justification, naming what carries the memory now
+            agent_trace_id: The run or trace that decided
+            agent_model: The exact model that decided
+            absorbed_into: Required for "duplicate_absorbed" — the surviving conclusion,
+                which inherits this one's derivation count
+            entry_origin: Which kind of caller decided
         """
         self._honcho._ensure_workspace()
-        self._honcho._http.delete(routes.conclusion(self.workspace_id, conclusion_id))
+        removal = ConclusionRemovalParams(
+            category=category,
+            reason=reason,
+            absorbed_into=absorbed_into,
+            entry_origin=entry_origin,
+            agent_trace_id=agent_trace_id,
+            agent_model=agent_model,
+        )
+        self._honcho._http.delete(
+            routes.conclusion(self.workspace_id, conclusion_id),
+            body=removal.model_dump(exclude_none=True),
+        )
+
+    def lineage(self, conclusion_id: str) -> ConclusionLineage:
+        """
+        Get one conclusion's full ledger, whether it is live or retired.
+
+        Returns how it was admitted, every prior formulation it was rewritten from,
+        everything it absorbed with the count each brought, and why it was removed if
+        it was. Retired conclusions are only reachable here, never through search.
+        """
+        self._honcho._ensure_workspace()
+        data = self._honcho._http.get(
+            routes.conclusion_lineage(self.workspace_id, conclusion_id)
+        )
+        return ConclusionLineage.from_lineage_response(
+            ConclusionLineageResponse.model_validate(data)
+        )
 
     def create(
         self,

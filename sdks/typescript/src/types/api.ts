@@ -296,9 +296,36 @@ export interface ConclusionResponse {
   session_id: string | null
   level: ConclusionLevel
   admission: Record<string, unknown>
-  admission_history: Array<Record<string, unknown>>
+  removal: Record<string, unknown> | null
   times_derived?: number
   created_at: string
+  deleted_at: string | null
+}
+
+/** One conclusion's full ledger: prior formulations and everything it absorbed. */
+export interface ConclusionLineageResponse extends ConclusionResponse {
+  admission_history: Array<Record<string, unknown>>
+  absorbed: Array<Record<string, unknown>>
+}
+
+export type RemovalCategory =
+  | 'duplicate_absorbed'
+  | 'superseded'
+  | 'contradicted'
+  | 'misderived'
+  | 'out_of_scope'
+  | 'transient'
+  | 'low_value'
+
+/** Why a conclusion is being retired. Every removal records one. */
+export interface ConclusionRemovalParams {
+  category: RemovalCategory
+  reason: string
+  /** Required for `duplicate_absorbed`: the survivor that inherits the count. */
+  absorbed_into?: string
+  entry_origin?: string
+  agent_trace_id: string
+  agent_model: string
 }
 
 export interface ConclusionCreateParams {

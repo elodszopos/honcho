@@ -3,6 +3,7 @@ adopts upstream's value goes green unless the literal is asserted here."""
 
 import datetime
 import json
+import re
 import tomllib
 from pathlib import Path
 from typing import Any, get_type_hints
@@ -18,6 +19,7 @@ from src.deriver import queue_manager
 from src.deriver.prompts import minimal_deriver_prompt
 from src.llm import registry as llm_registry
 from src.llm.api import is_transient_llm_error
+from src.reconciler import sync_vectors
 from src.utils import agent_tools
 from src.utils import representation as representation_module
 
@@ -105,7 +107,9 @@ def test_a_conclusion_cannot_be_written_without_an_admission():
 
 
 def test_a_deriver_write_must_name_its_source_messages():
-    with pytest.raises(ValidationError, match="deriver_agent conclusions require source_message_ids"):
+    with pytest.raises(
+        ValidationError, match="deriver_agent conclusions require source_message_ids"
+    ):
         schemas.ConclusionCreate(
             content="the user has a dog",
             observer_id="observer",
@@ -190,6 +194,123 @@ def test_the_extraction_examples_are_fenced_and_disclaimed():
         < prompt.index("Positive -- clears all four criteria:")
         < prompt.index("</examples>")
     )
+
+
+_DELETED_AT_WRITE = re.compile(r"deleted_at\s*=\s*(?!=)")
+
+_ALLOWED_DELETED_AT_WRITES = {
+    ("src/crud/document.py", "doc.deleted_at = removed_at"),
+    ("src/deriver/scope_backfill.py", "deleted_at=None,"),
+}
+
+
+def test_deleted_at_is_written_only_by_the_removal_chokepoint():
+    """Every retirement records why. A module setting deleted_at itself bypasses that."""
+    offenders: list[str] = []
+    for path in sorted((REPO_ROOT / "src").rglob("*.py")):
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        for line in path.read_text().splitlines():
+            stripped = line.strip()
+            if not _DELETED_AT_WRITE.search(stripped):
+                continue
+            if (relative, stripped) in _ALLOWED_DELETED_AT_WRITES:
+                continue
+            offenders.append(f"{relative}: {stripped}")
+
+    assert offenders == []
+
+
+def test_include_deleted_never_reaches_a_query_an_agent_runs():
+    """A retired conclusion must not re-enter derivation through a widened search."""
+    source = Path(crud_document.__file__).read_text()
+
+    builder = source.split("def get_documents_with_filters(")[1].split("\nasync def ")[
+        0
+    ]
+    assert source.count("include_deleted") == builder.count("include_deleted") > 0
+
+    assert "include_deleted" not in Path(crud_representation.__file__).read_text()
+    assert "include_deleted" not in Path(agent_tools.__file__).read_text()
+
+
+def test_every_agent_removal_category_names_a_distinct_reason():
+    assert schemas.AGENT_REMOVAL_CATEGORIES == {
+        "duplicate_absorbed",
+        "superseded",
+        "contradicted",
+        "misderived",
+        "out_of_scope",
+        "transient",
+        "low_value",
+    }
+    assert schemas.SYSTEM_REMOVAL_CATEGORIES == {
+        "superseded_by_enrichment",
+        "semantic_dup_replaced",
+        "scope_removed",
+        "queued_delete",
+    }
+    assert not (schemas.AGENT_REMOVAL_CATEGORIES & schemas.SYSTEM_REMOVAL_CATEGORIES)
+
+
+def test_a_removal_cannot_fabricate_an_actor_or_omit_a_reason():
+    with pytest.raises(ValidationError, match="non-whitespace"):
+        schemas.ConclusionRemoval(
+            category="misderived",
+            reason="  ",
+            entry_origin="operator_sdk",
+            agent_trace_id="t",
+            agent_model="m",
+        )
+
+    with pytest.raises(ValidationError, match="carry no agent attribution"):
+        schemas.ConclusionRemoval(
+            category="scope_removed",
+            reason="Session left the scope",
+            entry_origin="system",
+            agent_trace_id="pretend-agent",
+            agent_model="pretend-model",
+        )
+
+    with pytest.raises(ValidationError, match="require agent_trace_id"):
+        schemas.ConclusionRemoval(
+            category="misderived",
+            reason="The extraction misread the message",
+            entry_origin="operator_sdk",
+        )
+
+    with pytest.raises(ValidationError, match="absorbed_into is required"):
+        schemas.ConclusionRemoval(
+            category="duplicate_absorbed",
+            reason="Same memory as the survivor",
+            entry_origin="operator_sdk",
+            agent_trace_id="t",
+            agent_model="m",
+        )
+
+
+def test_the_enrich_path_reads_its_predecessor_under_a_row_lock():
+    """Without the lock a concurrent absorb raises the count between read and write."""
+    source = Path(crud_document.__file__).read_text()
+
+    enrich_fetch = source.split('if obs.action == "enrich" and obs.target_id:')[
+        1
+    ].split("if not previous_documents:")[0]
+    assert "for_update=True" in enrich_fetch
+
+    helper = source.split("async def fetch_documents_by_ids(")[1].split("\nasync def ")[
+        0
+    ]
+    assert ".with_for_update()" in helper
+    assert "populate_existing=True" in helper
+
+
+def test_nothing_hard_deletes_a_retired_conclusion():
+    """A retired row carries the ledger; reaping it destroys the record of why it went."""
+    reconciler = Path(sync_vectors.__file__).read_text()
+
+    assert "_cleanup_soft_deleted_documents_pgvector" not in reconciler
+    assert "delete(models.Document)" not in reconciler
+    assert "delete(models.Document)" not in Path(crud_document.__file__).read_text()
 
 
 def test_both_sdks_declare_the_same_version():

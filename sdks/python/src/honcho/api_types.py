@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Reasoning level of a conclusion. "explicit" conclusions are extracted directly
 # from messages; the others are derived during dreaming.
@@ -459,9 +459,59 @@ class ConclusionResponse(BaseModel):
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
     admission: dict[str, Any] = Field(default_factory=dict)
-    admission_history: list[dict[str, Any]] = Field(default_factory=list)
+    removal: dict[str, Any] | None = None
     times_derived: int = 1
     created_at: datetime.datetime
+    deleted_at: datetime.datetime | None = None
+
+
+class ConclusionLineageResponse(ConclusionResponse):
+    """One conclusion's full ledger: prior formulations and everything it absorbed."""
+
+    admission_history: list[dict[str, Any]] = Field(default_factory=list)
+    absorbed: list[dict[str, Any]] = Field(default_factory=list)
+
+
+REMOVAL_CATEGORIES = (
+    "duplicate_absorbed",
+    "superseded",
+    "contradicted",
+    "misderived",
+    "out_of_scope",
+    "transient",
+    "low_value",
+)
+
+RemovalCategory = Literal[
+    "duplicate_absorbed",
+    "superseded",
+    "contradicted",
+    "misderived",
+    "out_of_scope",
+    "transient",
+    "low_value",
+]
+
+
+class ConclusionRemovalParams(BaseModel):
+    """Why a conclusion is being retired. Every removal records one."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    category: RemovalCategory
+    reason: str = Field(min_length=1)
+    absorbed_into: str | None = None
+    entry_origin: str = "operator_sdk"
+    agent_trace_id: str
+    agent_model: str
+
+    @model_validator(mode="after")
+    def validate_removal(self) -> "ConclusionRemovalParams":
+        if self.category == "duplicate_absorbed" and not self.absorbed_into:
+            raise ValueError("duplicate_absorbed requires absorbed_into")
+        if self.category != "duplicate_absorbed" and self.absorbed_into:
+            raise ValueError("absorbed_into is only valid for duplicate_absorbed")
+        return self
 
 
 class ConclusionCreateParams(BaseModel):

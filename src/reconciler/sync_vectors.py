@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import sentry_sdk
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
@@ -575,39 +575,6 @@ async def _sync_message_embeddings(
     return synced_count, failed_count
 
 
-async def _cleanup_soft_deleted_documents_pgvector(
-    db: AsyncSession,
-    batch_size: int = RECONCILIATION_BATCH_SIZE,
-    older_than_minutes: int = 5,
-) -> int:
-    """
-    Cleanup soft-deleted documents
-    """
-
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-        minutes=older_than_minutes
-    )
-
-    # Find soft-deleted documents ready for cleanup
-    stmt = (
-        select(models.Document.id)
-        .where(models.Document.deleted_at.is_not(None))
-        .where(models.Document.deleted_at < cutoff)
-        .limit(batch_size)
-        .with_for_update(skip_locked=True)
-    )
-    result = await db.execute(stmt)
-    doc_ids = [row[0] for row in result.all()]
-
-    if not doc_ids:
-        return 0
-
-    # Hard delete directly (no vector store cleanup needed in pgvector mode)
-    await db.execute(delete(models.Document).where(models.Document.id.in_(doc_ids)))
-    logger.debug(f"Cleaned up {len(doc_ids)} soft-deleted documents (pgvector mode)")
-    return len(doc_ids)
-
-
 async def _reconcile_documents_batch(
     external_vector_store: VectorStore,
     metrics: ReconciliationMetrics,
@@ -683,26 +650,6 @@ async def _cleanup_documents_batch(
         return True
 
 
-async def _cleanup_pgvector_batch(
-    metrics: ReconciliationMetrics,
-) -> bool:
-    """
-    Clean up a single batch of soft-deleted documents in pgvector-only mode.
-
-    Returns True if work was done, False otherwise.
-    """
-    async with tracked_db("reconciliation_pgvector_cleanup") as db:
-        cleaned = await _cleanup_soft_deleted_documents_pgvector(
-            db, batch_size=RECONCILIATION_BATCH_SIZE
-        )
-        if not cleaned:
-            return False
-
-        metrics.documents_cleaned += cleaned
-        await db.commit()
-        return True
-
-
 async def record_pending_embeddings_backlog() -> None:
     """Set the pending-embeddings backlog gauge to the current count of
     MessageEmbedding rows awaiting a vector (sync_state='pending')."""
@@ -754,18 +701,14 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     external_vector_store = get_external_vector_store()
     deadline = time.monotonic() + RECONCILIATION_TIME_BUDGET_SECONDS
 
-    # pgvector-only mode: still need to embed pending MessageEmbedding rows
-    # (create_messages defers embedding to the reconciler), then clean up.
+    # pgvector-only mode: embed pending MessageEmbedding rows, since create_messages
+    # defers embedding to the reconciler. Retired documents keep their rows and their
+    # vectors here — nothing external holds a copy to reclaim.
     if external_vector_store is None:
         while time.monotonic() < deadline:
-            embs_work = await _reconcile_message_embeddings_batch(None, metrics)
-
-            if time.monotonic() >= deadline:
+            if not await _reconcile_message_embeddings_batch(None, metrics):
                 break
-
-            cleanup_work = await _cleanup_pgvector_batch(metrics)
-
-            if not (embs_work or cleanup_work):
+            if time.monotonic() >= deadline:
                 break
         logger.debug("Vector reconciliation cycle completed (pgvector mode)")
         return metrics
