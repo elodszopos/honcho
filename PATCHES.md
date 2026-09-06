@@ -25,7 +25,7 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 | Fork branch | `hermes` |
 | Fork point | `be543555` — upstream's tip; the backlog is closed |
 | Last upstream merge | tip, 2026-09-06 |
-| Carried surface | 73 files, +4,770 / -1,464 against `be543555`, measured after the commit that records it |
+| Carried surface | 87 files, +7,478 / -1,814 against `be543555`, measured after the commit that records it |
 | Collides with upstream | nothing ahead yet; the next pull's manifest comes from the gap report |
 | Schema | unchanged; `migrations/` is byte-identical from the fork point through upstream's tip |
 
@@ -76,6 +76,22 @@ overrides say nothing about what a merge would revert. The assertion lives in
   replacement is created and its predecessor retired in one transaction, with the
   predecessor's admission appended to `admission_history`. Explicit creates are never
   deduplicated behind the agent's back.
+- Retirement is an admission too. `soft_delete_documents` is the only writer of
+  `Document.deleted_at` and takes a required envelope — category, prose reason, actor —
+  recorded at `internal_metadata.removal`. Seven paths route through it, four of them system
+  categories that carry `entry_origin: system` and refuse agent attribution rather than
+  fabricate it. A held-value test scans `src/` and fails on any other writer.
+- Retired rows are permanent and keep their vector. Retention is what the removal record is
+  for, so nothing reaps; `include_deleted` exists only on the conclusion list builder and never
+  on a query an agent reaches. Every `select(models.Document)` site is inventoried in the
+  held-value tests, so a new one fails the suite until it gets a verdict on retired rows.
+- Reinforcement follows the memory. Enrichment writes `max(previous.times_derived + 1,
+  supplied)` with the whole batch's predecessors locked in one id-ordered statement — per-target
+  locking deadlocks two batches enriching the same pair in opposite order. `duplicate_absorbed`
+  sums the retired row's count onto its survivor and appends a snapshot carrying the count
+  either side, so callers never compute merge arithmetic themselves.
+- A search receipt may name a retired conclusion, because a receipt is history. The evidence a
+  derived conclusion rests on, and any enrichment target, must still be live.
 - `src/writing_contract.py` owns the writing rules and the conclusion bounds. The deriver,
   the dialectic agent, both summarizers and the dreamer's specialists embed the shared
   block; the bound is published in the tool JSON schema the model plans against and

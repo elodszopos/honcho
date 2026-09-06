@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Fork-owned docs
+
+`.claude/docs/` holds documentation this fork owns; upstream never touches it, so it carries no
+merge surface. Read the relevant one before working in its area.
+
+| Doc | Covers |
+|---|---|
+| `.claude/docs/memory-ledger.md` | conclusion lifecycle, removal categories, how reinforcement accumulates, which read surface answers which question, the invariants and what enforces them |
+
 ## The Memory System Is One Unit, Across Three Roots
 
 Honcho work is never only this repo. The server, its clients and its doctrine ship together;
