@@ -9,7 +9,7 @@ a contract changed in one root and not the others is a broken feature, not a pha
 
 | Root | Holds |
 |---|---|
-| `~/Projects/honcho/` | server, routers, crud, schemas, MCP server, both SDKs |
+| `~/Projects/honcho/` | server, routers, crud, schemas — plus four client surfaces: `mcp/`, `sdks/python/`, `sdks/typescript/`, `honcho-cli/` |
 | `~/.hermes/hermes-agent/plugins/memory/honcho/` | the tool the agent actually calls: `hermes_memory.py` (schema + handler), `session.py` (wrapper), `client.py`, `cli.py`, `audit.py` (local mutation log) |
 | `~/.hermes/skills/productivity/memory-honcho-steward/` | janitor and synthesist doctrine — the prompts that drive every steward write |
 
@@ -18,6 +18,11 @@ through the plugin's `honcho_conclusions` tool and the Python SDK — not throug
 A change to the MCP tool alone reaches nothing the steward does. Before designing any contract
 change, find every caller in all three roots and list them; database evidence about who wrote a
 row is not proof of which code path wrote it.
+
+**Enumerate all five client surfaces, every time.** MCP server, Python SDK, TypeScript SDK,
+`honcho-cli/`, and the Hermes plugin. `honcho-cli/` is the one that gets missed — it sits inside
+this repo rather than beside the SDKs, and it broke silently on a signature change that every
+other surface got. `git grep` the method name across all of them before calling a contract done.
 
 Scope, plan and commit all three together.
 
