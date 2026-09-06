@@ -673,6 +673,93 @@ def test_a_search_receipt_may_name_a_retired_conclusion_but_evidence_may_not(
     assert "retired" in rejected.text
 
 
+def test_lineage_returns_prior_formulations_newest_first(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+):
+    """Enrichment appends, so the stored order is oldest-first and must be flipped."""
+    workspace, observer, observed = conclusion_scope
+    current = _admit(
+        client, workspace.name, observer.name, observed.name, "The user keeps bees"
+    )
+    wordings = [
+        "The user keeps bees in the garden",
+        "The user keeps bees on the roof",
+    ]
+    for wording in wordings:
+        response = client.post(
+            f"/v3/workspaces/{workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    _admission_payload(
+                        content=wording,
+                        observer=observer.name,
+                        observed=observed.name,
+                        searched_ids=[current],
+                        action="enrich",
+                        target_id=current,
+                    )
+                ]
+            },
+        )
+        assert response.status_code == 201
+        current = response.json()[0]["id"]
+
+    lineage = _lineage(client, workspace=workspace.name, conclusion_id=current)
+    assert [entry["content"] for entry in lineage["admission_history"]] == [
+        "The user keeps bees in the garden",
+        "The user keeps bees",
+    ]
+    assert lineage["times_derived"] == 3
+
+
+@pytest.fixture
+async def second_observed_peer(
+    db_session: AsyncSession,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+) -> Peer:
+    workspace, _, _ = conclusion_scope
+    stranger = models.Peer(name=str(generate_nanoid()), workspace_name=workspace.name)
+    db_session.add(stranger)
+    await db_session.commit()
+    return stranger
+
+
+def test_a_conclusion_cannot_be_absorbed_across_collections(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+    second_observed_peer: Peer,
+):
+    """A survivor in someone else's collection would move the count out of scope."""
+    workspace, observer, observed = conclusion_scope
+
+    mine = _admit(
+        client, workspace.name, observer.name, observed.name, "The user keeps bees"
+    )
+    theirs = _admit(
+        client,
+        workspace.name,
+        observer.name,
+        second_observed_peer.name,
+        "The user keeps bees",
+    )
+
+    response = _retire(
+        client,
+        workspace=workspace.name,
+        conclusion_id=mine,
+        category="duplicate_absorbed",
+        reason="Absorbing into a conclusion in another collection",
+        absorbed_into=theirs,
+    )
+    assert response.status_code == 422
+    assert "its own collection" in response.text
+
+    survivor = _lineage(client, workspace=workspace.name, conclusion_id=theirs)
+    assert survivor["times_derived"] == 1
+    assert survivor["absorbed"] == []
+
+
 def test_a_removal_needs_a_reason_and_an_agent_category(
     client: TestClient,
     conclusion_scope: tuple[Workspace, Peer, Peer],

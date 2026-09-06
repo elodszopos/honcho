@@ -680,11 +680,12 @@ class ConclusionDetail(Conclusion):
     @field_validator("admission_history", mode="before")
     @classmethod
     def extract_admission_history(cls, metadata: Any) -> list[dict[str, Any]]:
+        """Newest formulation first; enrichment appends, so the stored order is oldest-first."""
         if isinstance(metadata, dict):
             typed_metadata = cast(dict[str, Any], metadata)
             history = typed_metadata.get("admission_history")
             if isinstance(history, list):
-                return cast(list[dict[str, Any]], history)
+                return list(reversed(cast(list[dict[str, Any]], history)))
         return []
 
     @field_validator("absorbed", mode="before")

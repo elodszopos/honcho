@@ -436,8 +436,8 @@ export class ConclusionsView {
       throw new Error('absorbed_into is only valid for duplicate_absorbed')
     }
     await this._delete(conclusionId, {
-      entry_origin: 'operator_sdk',
       ...removal,
+      entry_origin: removal.entry_origin ?? 'operator_sdk',
     })
   }
 

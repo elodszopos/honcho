@@ -415,7 +415,9 @@ async def test_scope_removal_records_why_and_only_it_is_reversible(
     assert restored[0].deleted_at is None
     assert "removal" not in restored[0].internal_metadata
 
-    # Retire that live copy for cause; a re-add must copy fresh, never revive it.
+    # Retire that live copy for cause. A re-add must neither revive it nor mint a
+    # fresh copy of the same source: the memory was ruled false, and copying it
+    # again would return it to recall with no removal record and a new id.
     await crud.soft_delete_documents(
         db_session,
         workspace_name,
@@ -431,9 +433,15 @@ async def test_scope_removal_records_why_and_only_it_is_reversible(
     await db_session.commit()
 
     await process_scope_backfill(backfill_payload, workspace_name)
-    live = [row for row in await _copy_rows() if row.deleted_at is None]
-    assert len(live) == 1
-    assert live[0].id != restored[0].id
+    rows = await _copy_rows()
+    assert [row for row in rows if row.deleted_at is None] == []
+    assert len(rows) == 1
+    assert rows[0].internal_metadata["removal"]["category"] == "contradicted"
+
+    # And it stays suppressed across repeated backfills, rather than accreting a
+    # new row and re-inflating any survivor that absorbed it.
+    await process_scope_backfill(backfill_payload, workspace_name)
+    assert len(await _copy_rows()) == 1
 
 
 async def test_backfill_skips_a_session_that_left_the_scope(

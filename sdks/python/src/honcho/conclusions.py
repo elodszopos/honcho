@@ -193,6 +193,15 @@ class Conclusion:
             deleted_at=data.deleted_at,
         )
 
+    def __repr__(self) -> str:
+        truncated = (
+            f"{self.content[:50]}..." if len(self.content) > 50 else self.content
+        )
+        return f"{type(self).__name__}(id='{self.id}', content='{truncated}')"
+
+    def __str__(self) -> str:
+        return self.content
+
 
 class ConclusionLineage(Conclusion):
     """A conclusion with its full ledger: prior formulations and absorptions."""
@@ -231,15 +240,6 @@ class ConclusionLineage(Conclusion):
             admission_history=data.admission_history,
             absorbed=data.absorbed,
         )
-
-    def __repr__(self) -> str:
-        truncated = (
-            f"{self.content[:50]}..." if len(self.content) > 50 else self.content
-        )
-        return f"Conclusion(id='{self.id}', content='{truncated}')"
-
-    def __str__(self) -> str:
-        return self.content
 
 
 class ConclusionsView:

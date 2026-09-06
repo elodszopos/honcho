@@ -6,10 +6,11 @@ from enum import Enum
 from logging import getLogger
 from typing import Any, Literal
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import Select
+from sqlalchemy.orm import load_only
+from sqlalchemy.sql import ColumnElement, Select
 from sqlalchemy.sql.functions import func
 
 from src import models, schemas
@@ -315,8 +316,6 @@ async def fetch_documents_by_ids(
     observed: str,
     document_ids: list[str],
     filters: dict[str, Any] | None = None,
-    *,
-    for_update: bool = False,
 ) -> list[models.Document]:
     """Fetch documents by IDs, preserving input order. DB-only operation."""
     if not document_ids:
@@ -331,14 +330,6 @@ async def fetch_documents_by_ids(
         .where(models.Document.id.in_(document_ids))
     )
     stmt = apply_filter(stmt, models.Document, filters)
-    if for_update:
-        # Lock in id order to match _apply_document_row_updates, and reload the identity
-        # map so a concurrent reinforcement is visible before the caller carries it forward.
-        stmt = (
-            stmt.order_by(models.Document.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
 
     result = await db.execute(stmt)
     documents = {doc.id: doc for doc in result.scalars().all()}
@@ -935,21 +926,41 @@ async def soft_delete_documents(
     if survivor_id and survivor_id in target_ids:
         raise ValidationException("A conclusion cannot be absorbed into itself")
 
-    conditions = [
-        models.Document.id.in_(target_ids + ([survivor_id] if survivor_id else [])),
-        models.Document.workspace_name == workspace_name,
-        models.Document.deleted_at.is_(None),
-    ]
+    # Scope filters narrow which conclusions this caller may retire; they must not
+    # narrow the survivor, whose only rule is its collection (checked per row below).
+    # The janitor legitimately absorbs across sessions.
+    scoped_targets: list[ColumnElement[bool]] = [models.Document.id.in_(target_ids)]
     if observer is not None:
-        conditions.append(models.Document.observer == observer)
+        scoped_targets.append(models.Document.observer == observer)
     if observed is not None:
-        conditions.append(models.Document.observed == observed)
+        scoped_targets.append(models.Document.observed == observed)
     if session_name is not None:
-        conditions.append(models.Document.session_name == session_name)
+        scoped_targets.append(models.Document.session_name == session_name)
+
+    selector = and_(*scoped_targets)
+    if survivor_id:
+        selector = or_(selector, models.Document.id == survivor_id)
 
     result = await db.execute(
         select(models.Document)
-        .where(*conditions)
+        .options(
+            load_only(
+                models.Document.id,
+                models.Document.observer,
+                models.Document.observed,
+                models.Document.session_name,
+                models.Document.level,
+                models.Document.content,
+                models.Document.times_derived,
+                models.Document.internal_metadata,
+                models.Document.deleted_at,
+            )
+        )
+        .where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.deleted_at.is_(None),
+            selector,
+        )
         .order_by(models.Document.id)
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -1248,22 +1259,42 @@ async def create_observations(
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
 
+    # Lock every enrichment target for the batch in one id-ordered statement. Locking
+    # them one at a time in observation order deadlocks two batches enriching the same
+    # pair in opposite order.
+    locked_targets: dict[str, models.Document] = {}
+    batch_target_ids = sorted(
+        {
+            obs.target_id
+            for obs in observations
+            if obs.action == "enrich" and obs.target_id
+        }
+    )
+    if batch_target_ids:
+        locked_result = await db.execute(
+            select(models.Document)
+            .where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.id.in_(batch_target_ids),
+                models.Document.deleted_at.is_(None),
+            )
+            .order_by(models.Document.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        locked_targets = {doc.id: doc for doc in locked_result.scalars()}
+
     for obs, embedding in zip(observations, embeddings, strict=True):
-        previous_documents: list[models.Document] = []
+        previous: models.Document | None = None
         if obs.action == "enrich" and obs.target_id:
-            previous_documents = await fetch_documents_by_ids(
-                db,
-                workspace_name,
+            previous = locked_targets.get(obs.target_id)
+            if previous is None or (previous.observer, previous.observed) != (
                 obs.observer_id,
                 obs.observed_id,
-                [obs.target_id],
-                for_update=True,
-            )
-            if not previous_documents:
+            ):
                 raise ResourceNotFoundException(
                     f"Enrichment target {obs.target_id} was not found in the conclusion collection"
                 )
-        previous = previous_documents[0] if previous_documents else None
         previous_metadata = previous.internal_metadata if previous else {}
         admission_history = list(previous_metadata.get("admission_history", []))
         absorbed = list(previous_metadata.get("absorbed", []))
@@ -1283,7 +1314,11 @@ async def create_observations(
             # An admitted enrich is a re-derivation the agent searched for and justified,
             # so a replacement never carries less than its predecessor earned.
             times_derived = max(previous.times_derived + 1, times_derived)
-        internal_metadata = {
+        # Start from the predecessor so a revision inherits every ledger key, then
+        # overwrite only what admission owns. Building a fresh dict silently drops
+        # whatever the last change added -- scope provenance, message timestamps.
+        internal_metadata = dict(previous_metadata)
+        internal_metadata |= {
             "message_ids": obs.source_message_ids,
             "premises": obs.premises or None,
             "sources": obs.sources or None,

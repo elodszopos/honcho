@@ -297,6 +297,7 @@ async def _fetch_random_observations(
         models.Document.workspace_name == workspace_name,
         models.Document.observer == observer,
         models.Document.observed == observed,
+        models.Document.deleted_at.is_(None),
     )
 
     if levels:
@@ -339,6 +340,7 @@ async def _fetch_all_observations(
             models.Document.workspace_name == workspace_name,
             models.Document.observer == observer,
             models.Document.observed == observed,
+            models.Document.deleted_at.is_(None),
         )
         .order_by(models.Document.created_at.desc())
         .limit(limit)

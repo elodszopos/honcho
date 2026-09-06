@@ -274,5 +274,5 @@ TaskType = Literal[
     "scope_backfill",
     "scope_removal",
 ]
-VectorSyncState = Literal["synced", "pending", "failed"]
+VectorSyncState = Literal["synced", "pending", "failed", "purged"]
 DocumentLevel = Literal["explicit", "deductive", "inductive", "contradiction"]

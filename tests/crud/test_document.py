@@ -351,6 +351,94 @@ class TestDocumentCRUD:
         assert contents[1:] == ["tie 2", "tie 1", "tie 0"]
 
     @pytest.mark.asyncio
+    async def test_concurrent_enrichment_batches_do_not_deadlock(
+        self,
+        db_session: AsyncSession,
+        db_engine: AsyncEngine,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Two batches enriching the same pair in opposite order must not deadlock.
+
+        Locking targets one at a time in observation order lets batch A hold the
+        first row while batch B holds the second, and both then wait forever.
+        Postgres kills one with a DeadlockDetected. Repeated because the
+        interleaving is a race: this never fails falsely, it only sometimes
+        misses a regression on a single pass.
+        """
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+        await db_session.commit()
+
+        factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+
+        def _enrich(target_id: str, content: str) -> schemas.ConclusionCreate:
+            return schemas.ConclusionCreate(
+                content=content,
+                observer_id=test_peer.name,
+                observed_id=test_peer2.name,
+                session_id=test_session.name,
+                action="enrich",
+                target_id=target_id,
+                reason_for_entry="Concurrent enrichment probe",
+                search_query="probe",
+                searched_conclusion_ids=[target_id],
+                source_tool_call_id="probe",
+                entry_origin="explicit_agent",
+                agent_trace_id="probe-trace",
+                agent_model="probe-model",
+            )
+
+        async def _run(order: list[str], label: str) -> BaseException | None:
+            async with factory() as session:
+                try:
+                    await crud.create_observations(
+                        session,
+                        observations=[
+                            _enrich(target, f"{label} rewrite of {target}")
+                            for target in order
+                        ],
+                        workspace_name=test_workspace.name,
+                        embeddings=[[0.11] * 1536 for _ in order],
+                    )
+                except BaseException as exc:  # noqa: BLE001
+                    return exc
+            return None
+
+        for _ in range(5):
+            first = models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                content=f"probe one {generate_nanoid()}",
+                session_name=test_session.name,
+                embedding=[0.31] * 1536,
+            )
+            second = models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                content=f"probe two {generate_nanoid()}",
+                session_name=test_session.name,
+                embedding=[0.32] * 1536,
+            )
+            db_session.add_all([first, second])
+            await db_session.commit()
+
+            outcomes = await asyncio.gather(
+                _run([first.id, second.id], "a"),
+                _run([second.id, first.id], "b"),
+            )
+
+            deadlocks = [
+                exc
+                for exc in outcomes
+                if exc is not None and "deadlock" in str(exc).lower()
+            ]
+            assert deadlocks == []
+
+    @pytest.mark.asyncio
     async def test_absorption_promotes_the_survivor_in_most_derived_recall(
         self,
         db_session: AsyncSession,

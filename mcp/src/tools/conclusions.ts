@@ -30,15 +30,47 @@ export function register(server: McpServer, ctx: ToolContext) {
           .describe(
             "Include retired conclusions, each carrying the reason it was removed.",
           ),
+        page: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe("Page number, 1-indexed. Retired conclusions past page one are only reachable this way."),
+        size: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe("Results per page (default 50, max 100)."),
+        filters: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'Additional filter criteria, e.g. {"level": "explicit"}. Merged with this peer pair.',
+          ),
       },
     },
-    async ({ workspace_id, peer_id, target_peer_id, include_deleted }) => {
+    async ({
+      workspace_id,
+      peer_id,
+      target_peer_id,
+      include_deleted,
+      page: pageNumber,
+      size,
+      filters,
+    }) => {
       try {
         const peer = await ctx.clientFor(workspace_id).peer(peer_id);
         const scope = target_peer_id
           ? peer.conclusionsOf(target_peer_id)
           : peer.conclusions;
-        const page = await scope.list({ includeDeleted: include_deleted });
+        const page = await scope.list({
+          includeDeleted: include_deleted,
+          page: pageNumber,
+          size,
+          filters,
+        });
         return textResult({
           conclusions: page.items.map((c) => ({
             id: c.id,
@@ -48,7 +80,9 @@ export function register(server: McpServer, ctx: ToolContext) {
             session_id: c.sessionId,
             times_derived: c.timesDerived,
             created_at: c.createdAt,
-            ...(c.removal ? { removal: c.removal, deleted_at: c.deletedAt } : {}),
+            ...(c.deletedAt
+              ? { deleted_at: c.deletedAt, removal: c.removal ?? null }
+              : {}),
           })),
           total: page.total,
           page: page.page,
@@ -148,7 +182,7 @@ export function register(server: McpServer, ctx: ToolContext) {
               .min(1)
               .optional()
               .describe(
-                "Reinforcement count to carry onto the admitted conclusion. Omit unless consolidating sources whose counts must be preserved.",
+                "Rarely needed. OMIT when consolidating: retiring each source as duplicate_absorbed already moves its derivation count onto the survivor, so supplying a count here counts those sources twice. Enrichment carries the predecessor's count forward on its own.",
               ),
           }),
         ).describe("Search-backed admission decisions. Search with query_conclusions before writing."),

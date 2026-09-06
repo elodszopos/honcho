@@ -518,7 +518,6 @@ class TestNormalizeObservationId:
         assert _normalize_observation_id(raw) == expected
 
 
-@pytest.mark.asyncio
 def _delete_input(*, observation_ids: list[str], **overrides: Any) -> dict[str, Any]:
     tool_input: dict[str, Any] = {
         "observation_ids": observation_ids,
@@ -529,6 +528,7 @@ def _delete_input(*, observation_ids: list[str], **overrides: Any) -> dict[str, 
     return tool_input
 
 
+@pytest.mark.asyncio
 class TestDeleteObservations:
     """Tests for _handle_delete_observations."""
 

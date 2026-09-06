@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Optional
+from uuid import uuid4
 
 import typer
 
@@ -12,9 +13,17 @@ from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import (
+    add_common_options,
+    get_client,
+    get_resolved_config,
+    handle_cmd_flags,
+)
 
-app = typer.Typer(cls=HonchoTyperGroup, help="List, search, create, and delete peer conclusions (Honcho's memory atoms).")
+app = typer.Typer(
+    cls=HonchoTyperGroup,
+    help="List, search, create, and delete peer conclusions (Honcho's memory atoms).",
+)
 add_common_options(app)
 
 
@@ -29,7 +38,10 @@ def _require_observer(observer: str | None) -> str:
                 "No peer or workspace scoped. Pass --peer/-p and --workspace/-w, or set HONCHO_PEER_ID and HONCHO_WORKSPACE_ID.",
             )
         else:
-            print_error("NO_PEER", "Peer required. Pass --peer/-p: honcho conclusion <cmd> -p <peer>")
+            print_error(
+                "NO_PEER",
+                "Peer required. Pass --peer/-p: honcho conclusion <cmd> -p <peer>",
+            )
         raise typer.Exit(1)
     return obs
 
@@ -39,7 +51,9 @@ def list_conclusions(
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
     limit: int = typer.Option(10, "--limit", help="Max results"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Override workspace ID"
+    ),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
@@ -70,7 +84,19 @@ def list_conclusions(
             }
             for c in conclusions
         ]
-        print_result(items, columns=["id", "content", "workspace_id", "observer_id", "observed_id", "session_id", "created_at"], title="Conclusions")
+        print_result(
+            items,
+            columns=[
+                "id",
+                "content",
+                "workspace_id",
+                "observer_id",
+                "observed_id",
+                "session_id",
+                "created_at",
+            ],
+            title="Conclusions",
+        )
     except Exception as e:
         _handle_error(e, "conclusion", "list")
 
@@ -81,7 +107,9 @@ def search(
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
     top_k: int = typer.Option(10, help="Max results"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Override workspace ID"
+    ),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
@@ -112,7 +140,11 @@ def search(
             }
             for c in results
         ]
-        print_result(items, columns=["id", "content", "workspace_id", "session_id", "created_at"], title=f"Conclusion search: {query}")
+        print_result(
+            items,
+            columns=["id", "content", "workspace_id", "session_id", "created_at"],
+            title=f"Conclusion search: {query}",
+        )
     except Exception as e:
         _handle_error(e, "conclusion", "search")
 
@@ -122,14 +154,20 @@ def create(
     content: str = typer.Argument(help="Conclusion content or JSON payload"),
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
-    session_id: Optional[str] = typer.Option(None, "--session", "-s", help="Session context"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session_id: Optional[str] = typer.Option(
+        None, "--session", "-s", help="Session context"
+    ),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Override workspace ID"
+    ),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Create a conclusion."""
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session_id)
+    handle_cmd_flags(
+        json_output=json_output, workspace=workspace, peer=peer, session=session_id
+    )
     observer = _require_observer(observer)
     client, config = get_client()
 
@@ -157,39 +195,76 @@ def create(
         if result is None:
             print_error("CREATE_FAILED", "Conclusion create returned no results")
             raise typer.Exit(1)
-        print_result({
-            "id": result.id,
-            "content": result.content,
-            "workspace_id": config.workspace_id,
-            "observer_id": result.observer_id,
-            "observed_id": result.observed_id,
-            "session_id": result.session_id,
-            "created_at": str(result.created_at),
-        })
+        print_result(
+            {
+                "id": result.id,
+                "content": result.content,
+                "workspace_id": config.workspace_id,
+                "observer_id": result.observer_id,
+                "observed_id": result.observed_id,
+                "session_id": result.session_id,
+                "created_at": str(result.created_at),
+            }
+        )
     except Exception as e:
         _handle_error(e, "conclusion", "create")
 
 
 @app.command()
 def delete(
-    conclusion_id: str = typer.Argument(help="Conclusion ID to delete"),
+    conclusion_id: str = typer.Argument(help="Conclusion ID to retire"),
+    category: str = typer.Option(
+        ...,
+        "--category",
+        help=(
+            "Why it is going: duplicate_absorbed (needs --absorbed-into), superseded, "
+            "contradicted, misderived, out_of_scope, transient, low_value"
+        ),
+    ),
+    reason: str = typer.Option(
+        ...,
+        "--reason",
+        help="Audit row: what carries the memory now, when something does",
+    ),
+    absorbed_into: Optional[str] = typer.Option(
+        None,
+        "--absorbed-into",
+        help="Survivor that inherits the derivation count (duplicate_absorbed only)",
+    ),
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    workspace: Optional[str] = typer.Option(
+        None, "--workspace", "-w", help="Override workspace ID"
+    ),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
-    """Delete a conclusion."""
+    """Retire a conclusion, recording why. The row and its ledger are kept."""
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     validate_resource_id(conclusion_id, "conclusion")
+    if category == "duplicate_absorbed" and not absorbed_into:
+        print_error(
+            "MISSING_SURVIVOR",
+            "duplicate_absorbed requires --absorbed-into: the surviving conclusion ID",
+        )
+        raise typer.Exit(1)
+    if category != "duplicate_absorbed" and absorbed_into:
+        print_error(
+            "UNEXPECTED_SURVIVOR",
+            "--absorbed-into is only valid with --category duplicate_absorbed",
+        )
+        raise typer.Exit(1)
     client, config = get_client()
 
     if not observer:
         observer = config.peer_id
     if not observer:
-        print_error("NO_PEER", "Peer required. Pass --peer/-p: honcho conclusion <cmd> -p <peer>")
+        print_error(
+            "NO_PEER",
+            "Peer required. Pass --peer/-p: honcho conclusion <cmd> -p <peer>",
+        )
         raise typer.Exit(1)
 
     p = client.peer(observer)
@@ -204,7 +279,7 @@ def delete(
                 f"  observer: {observer}\n"
                 f"  observed: {observed or '(self)'}"
             )
-        typer.confirm(f"Delete conclusion '{conclusion_id}'?", abort=True)
+        typer.confirm(f"Retire conclusion '{conclusion_id}' as {category}?", abort=True)
 
     try:
         if observed:
@@ -212,8 +287,22 @@ def delete(
         else:
             scope = p.conclusions
 
-        scope.delete(conclusion_id)
-        status(f"Conclusion '{conclusion_id}' deleted")
-        print_result({"deleted": conclusion_id})
+        scope.delete(
+            conclusion_id,
+            category=category,  # pyright: ignore[reportArgumentType]
+            reason=reason,
+            absorbed_into=absorbed_into,
+            agent_trace_id=f"honcho-cli-{uuid4()}",
+            agent_model="human-operator",
+            entry_origin="operator_cli",
+        )
+        status(f"Conclusion '{conclusion_id}' retired as {category}")
+        print_result(
+            {
+                "retired": conclusion_id,
+                "category": category,
+                **({"absorbed_into": absorbed_into} if absorbed_into else {}),
+            }
+        )
     except Exception as e:
         _handle_error(e, "conclusion", conclusion_id)

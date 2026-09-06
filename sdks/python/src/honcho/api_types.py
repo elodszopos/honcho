@@ -6,7 +6,7 @@ These types mirror the server's Pydantic schemas for API responses and requests.
 from __future__ import annotations
 
 import datetime
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -472,16 +472,6 @@ class ConclusionLineageResponse(ConclusionResponse):
     absorbed: list[dict[str, Any]] = Field(default_factory=list)
 
 
-REMOVAL_CATEGORIES = (
-    "duplicate_absorbed",
-    "superseded",
-    "contradicted",
-    "misderived",
-    "out_of_scope",
-    "transient",
-    "low_value",
-)
-
 RemovalCategory = Literal[
     "duplicate_absorbed",
     "superseded",
@@ -491,6 +481,8 @@ RemovalCategory = Literal[
     "transient",
     "low_value",
 ]
+
+REMOVAL_CATEGORIES = get_args(RemovalCategory)
 
 
 class ConclusionRemovalParams(BaseModel):

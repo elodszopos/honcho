@@ -17,6 +17,7 @@ from src.crud import document as crud_document
 from src.crud import representation as crud_representation
 from src.deriver import queue_manager
 from src.deriver.prompts import minimal_deriver_prompt
+from src.dreamer import dream_scheduler, surprisal
 from src.llm import registry as llm_registry
 from src.llm.api import is_transient_llm_error
 from src.reconciler import sync_vectors
@@ -288,20 +289,54 @@ def test_a_removal_cannot_fabricate_an_actor_or_omit_a_reason():
         )
 
 
-def test_the_enrich_path_reads_its_predecessor_under_a_row_lock():
-    """Without the lock a concurrent absorb raises the count between read and write."""
+def test_enrichment_locks_its_whole_batch_in_one_ordered_statement():
+    """Locking targets one at a time in observation order deadlocks two batches
+    enriching the same pair in opposite order, and no lock at all loses a
+    concurrent absorb between read and write."""
     source = Path(crud_document.__file__).read_text()
+    body = source.split("async def create_observations(")[1].split("\nasync def ")[0]
 
-    enrich_fetch = source.split('if obs.action == "enrich" and obs.target_id:')[
-        1
-    ].split("if not previous_documents:")[0]
-    assert "for_update=True" in enrich_fetch
+    batch_lock = body.split("locked_targets: dict[str, models.Document] = {}")[1].split(
+        "for obs, embedding in zip("
+    )[0]
+    assert "sorted(" in batch_lock
+    assert ".order_by(models.Document.id)" in batch_lock
+    assert ".with_for_update()" in batch_lock
+    assert "populate_existing=True" in batch_lock
 
-    helper = source.split("async def fetch_documents_by_ids(")[1].split("\nasync def ")[
-        0
-    ]
-    assert ".with_for_update()" in helper
-    assert "populate_existing=True" in helper
+    # The per-observation opt-in fetch is what deadlocked; it must not come back.
+    assert "for_update: bool" not in source
+    assert "for_update=True" not in source
+
+
+# Every query over documents needs a verdict on retired rows. Retention made them
+# permanent, so a missing `deleted_at` filter no longer self-heals in five minutes.
+# Changing a count here means going to the site and deciding.
+_DOCUMENT_QUERY_SITES = {
+    "src/crud/document.py": 16,
+    "src/crud/representation.py": 2,
+    "src/deriver/scope_backfill.py": 5,
+    "src/dreamer/dream_scheduler.py": 1,
+    "src/dreamer/surprisal.py": 2,
+    "src/reconciler/sync_vectors.py": 1,
+}
+
+
+def test_every_document_query_site_has_a_recorded_verdict():
+    counts: dict[str, int] = {}
+    for path in sorted((REPO_ROOT / "src").rglob("*.py")):
+        found = path.read_text().count("select(models.Document")
+        if found:
+            counts[path.relative_to(REPO_ROOT).as_posix()] = found
+
+    assert counts == _DOCUMENT_QUERY_SITES
+
+    # The three modules an agent's reasoning reaches must filter unconditionally.
+    for module in (crud_representation, surprisal, dream_scheduler):
+        source = Path(module.__file__).read_text()
+        assert source.count("select(models.Document") == source.count(
+            "models.Document.deleted_at.is_(None)"
+        )
 
 
 def test_nothing_hard_deletes_a_retired_conclusion():

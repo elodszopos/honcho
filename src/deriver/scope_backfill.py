@@ -237,6 +237,7 @@ async def _run_backfill(
         )
         live_copies: set[tuple[str, str]] = set()
         soft_deleted_copies: dict[tuple[str, str], str] = {}
+        retired_for_cause: set[tuple[str, str]] = set()
         for copy_doc in copies_result.scalars().all():
             key = (copy_doc.observed, str(copy_doc.internal_metadata[COPIED_FROM_KEY]))
             removal = cast(
@@ -245,13 +246,16 @@ async def _run_backfill(
             if copy_doc.deleted_at is None:
                 live_copies.add(key)
             elif removal.get("category") == "scope_removed":
-                # Only a membership withdrawal is reversible. A copy the janitor retired
-                # for cause must not return; re-adding the session copies it fresh instead.
                 soft_deleted_copies.setdefault(key, copy_doc.id)
+            else:
+                # A copy retired for cause is terminal for that source. Reviving the row
+                # is not enough to suppress it -- without this the source is simply
+                # copied again, and the memory an agent ruled false comes back clean.
+                retired_for_cause.add(key)
 
         for source in source_docs:
             key = (source.observed, source.id)
-            if key in live_copies:
+            if key in live_copies or key in retired_for_cause:
                 continue
             # Vectors hydrate per chunk; plans only carry ids + content.
             plans.append(

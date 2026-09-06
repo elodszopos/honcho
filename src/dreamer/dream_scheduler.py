@@ -198,6 +198,7 @@ class DreamScheduler:
                     models.Document.observer == observer,
                     models.Document.observed == observed,
                     models.Document.level == "explicit",
+                    models.Document.deleted_at.is_(None),
                 )
                 .order_by(models.Document.created_at.desc())
                 .limit(1)
