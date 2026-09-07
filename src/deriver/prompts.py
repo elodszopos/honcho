@@ -39,6 +39,16 @@ def _custom_instructions_section(custom_instructions: str | None) -> str:
     )
 
 
+# TODO(DEFERRED): the ALWAYS EXCLUDE taxonomy in this prompt is not holding in
+# production. The Honcho janitor soft-deletes 8-9 conclusions every day, reaches
+# its autonomous cap, and leaves 12-22 candidates standing. Every cluster it
+# names is already banned by that list: invoice/accounting detail owned by a
+# skill, report-format mechanics, config-discoverable mirrors, superseded plans.
+# The derive-then-delete loop burns two model passes per conclusion. Diagnose why
+# extraction ignores the rules (prompt position, custom_instructions, or the
+# admission pass) before adding more exclusion prose; the list is already long
+# enough that extending it is unlikely to be the fix. Keep this note OUTSIDE the
+# f-string below -- inside it, it ships to the model as prompt text.
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
