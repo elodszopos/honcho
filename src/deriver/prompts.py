@@ -39,16 +39,18 @@ def _custom_instructions_section(custom_instructions: str | None) -> str:
     )
 
 
-# TODO(DEFERRED): the ALWAYS EXCLUDE taxonomy in this prompt is not holding in
-# production. The Honcho janitor soft-deletes 8-9 conclusions every day, reaches
-# its autonomous cap, and leaves 12-22 candidates standing. Every cluster it
-# names is already banned by that list: invoice/accounting detail owned by a
-# skill, report-format mechanics, config-discoverable mirrors, superseded plans.
-# The derive-then-delete loop burns two model passes per conclusion. Diagnose why
-# extraction ignores the rules (prompt position, custom_instructions, or the
-# admission pass) before adding more exclusion prose; the list is already long
-# enough that extending it is unlikely to be the fix. Keep this note OUTSIDE the
-# f-string below -- inside it, it ships to the model as prompt text.
+# TODO(REVISIT): whether the ALWAYS EXCLUDE taxonomy below holds is not yet
+# measurable. Retirement only began preserving rows on 2026-09-06 (4685ac4c);
+# before that it removed them, so nothing survives to show what the deriver
+# produced or what the janitor took back out. The current pool is a sample of
+# what escaped deletion, which is the opposite of the population in question --
+# do not read origin counts off it. From now on retired rows persist, so measure
+# the real rates first: group live and retired rows by `internal_metadata`
+# origin and by `removal.category`, over a window that starts after the change.
+# Only then decide whether the fix belongs in this taxonomy, in the admission
+# pass, or in the steward doctrine that governs what agents write directly.
+# Keep this note OUTSIDE the f-string below -- inside it, it ships to the model
+# as prompt text.
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
