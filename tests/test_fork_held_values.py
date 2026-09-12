@@ -235,7 +235,7 @@ def test_include_deleted_never_reaches_a_query_an_agent_runs():
 
 
 def test_every_agent_removal_category_names_a_distinct_reason():
-    assert schemas.AGENT_REMOVAL_CATEGORIES == {
+    assert {
         "duplicate_absorbed",
         "superseded",
         "contradicted",
@@ -243,13 +243,13 @@ def test_every_agent_removal_category_names_a_distinct_reason():
         "out_of_scope",
         "transient",
         "low_value",
-    }
-    assert schemas.SYSTEM_REMOVAL_CATEGORIES == {
+    } == schemas.AGENT_REMOVAL_CATEGORIES
+    assert {
         "superseded_by_enrichment",
         "semantic_dup_replaced",
         "scope_removed",
         "queued_delete",
-    }
+    } == schemas.SYSTEM_REMOVAL_CATEGORIES
     assert not (schemas.AGENT_REMOVAL_CATEGORIES & schemas.SYSTEM_REMOVAL_CATEGORIES)
 
 
@@ -318,7 +318,7 @@ _DOCUMENT_QUERY_SITES = {
     "src/deriver/scope_backfill.py": 5,
     "src/dreamer/dream_scheduler.py": 1,
     "src/dreamer/surprisal.py": 2,
-    "src/reconciler/sync_vectors.py": 1,
+    "src/reconciler/sync_vectors.py": 3,
 }
 
 

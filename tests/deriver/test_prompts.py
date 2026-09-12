@@ -30,7 +30,9 @@ def test_minimal_deriver_prompt_omits_custom_instructions_when_absent() -> None:
     assert "CUSTOM INSTRUCTIONS:" not in prompt
 
 
-def test_minimal_deriver_prompt_separates_source_messages_from_admission_cases() -> None:
+def test_minimal_deriver_prompt_separates_source_messages_from_admission_cases() -> (
+    None
+):
     prompt = minimal_deriver_prompt(
         peer_id="alice",
         messages="alice: I prefer tea without sugar",

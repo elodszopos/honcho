@@ -8,7 +8,7 @@ This test suite covers the full representation workflow including:
 - Working representation retrieval with different strategies
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -84,13 +84,13 @@ class TestRepresentationWorkflow:
         # Create explicit observations
         explicit_obs1 = ExplicitObservation(
             content="User likes dogs",
-            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
             message_ids=[1],
             session_name="test_session",
         )
         explicit_obs2 = ExplicitObservation(
             content="User has a pet named Rover",
-            created_at=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 1, 0, tzinfo=UTC),
             message_ids=[2],
             session_name="test_session",
         )
@@ -99,7 +99,7 @@ class TestRepresentationWorkflow:
         deductive_obs1 = DeductiveObservation(
             conclusion="User probably has a dog named Rover",
             premises=["User likes dogs", "User has a pet named Rover"],
-            created_at=datetime(2025, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 2, 0, tzinfo=UTC),
             message_ids=[3],
             session_name="test_session",
         )
@@ -140,7 +140,7 @@ class TestRepresentationWorkflow:
             explicit=[
                 ExplicitObservation(
                     content="User likes cats",
-                    created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
                     message_ids=[1],
                     session_name="session1",
                 )
@@ -152,13 +152,13 @@ class TestRepresentationWorkflow:
             explicit=[
                 ExplicitObservation(
                     content="User likes cats",  # Duplicate
-                    created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
                     message_ids=[1],
                     session_name="session1",
                 ),
                 ExplicitObservation(
                     content="User likes dogs",  # New
-                    created_at=datetime(2025, 1, 1, 11, 0, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2025, 1, 1, 11, 0, 0, tzinfo=UTC),
                     message_ids=[2],
                     session_name="session1",
                 ),
@@ -182,7 +182,7 @@ class TestRepresentationWorkflow:
             explicit=[
                 ExplicitObservation(
                     content="User likes birds",
-                    created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
                     message_ids=[3],
                     session_name="session1",
                 )
@@ -224,7 +224,7 @@ class TestDocumentCreationWorkflow:
                 "message_ids": [1],
                 "session_name": "test_session",
             },
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
         with patch(
@@ -320,7 +320,7 @@ class TestDocumentCreationWorkflow:
                 "message_ids": [1],
             },
             session_name="test_session",
-            created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC),
         )
 
         deductive_doc = models.Document(
@@ -335,7 +335,7 @@ class TestDocumentCreationWorkflow:
                 "premises": ["User said they like programming"],
             },
             session_name="test_session",
-            created_at=datetime(2025, 1, 1, 10, 1, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 10, 1, 0, tzinfo=UTC),
         )
 
         # Convert to representation
@@ -404,21 +404,21 @@ class TestRepresentationHashingAndEquality:
         """Test ExplicitObservation equality and hashing"""
         obs1 = ExplicitObservation(
             content="Test content",
-            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
             message_ids=[1],
             session_name="session1",
         )
 
         obs2 = ExplicitObservation(
             content="Test content",
-            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
             message_ids=[1],
             session_name="session1",
         )
 
         obs3 = ExplicitObservation(
             content="Different content",
-            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
             message_ids=[1],
             session_name="session1",
         )
@@ -437,7 +437,7 @@ class TestRepresentationHashingAndEquality:
         obs1 = DeductiveObservation(
             conclusion="Test conclusion",
             premises=["premise1", "premise2"],
-            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
             message_ids=[1],
             session_name="session1",
         )
@@ -445,7 +445,7 @@ class TestRepresentationHashingAndEquality:
         obs2 = DeductiveObservation(
             conclusion="Test conclusion",
             premises=["premise1", "premise2"],
-            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
             message_ids=[1],
             session_name="session1",
         )
@@ -453,7 +453,7 @@ class TestRepresentationHashingAndEquality:
         obs3 = DeductiveObservation(
             conclusion="Different conclusion",
             premises=["premise1", "premise2"],
-            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
             message_ids=[1],
             session_name="session1",
         )

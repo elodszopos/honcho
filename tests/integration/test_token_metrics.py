@@ -84,9 +84,9 @@ class PrometheusMetricChecker:
     ) -> None:
         """Assert that the delta matches expected value."""
         delta = self.get_delta(counter, labels, before)
-        assert (
-            delta == expected
-        ), f"{message}: expected delta {expected}, got {delta}. Labels: {labels}"
+        assert delta == expected, (
+            f"{message}: expected delta {expected}, got {delta}. Labels: {labels}"
+        )
 
 
 @pytest.fixture
@@ -194,9 +194,7 @@ def create_mock_deriver_responses(
     """Create extraction and admission responses for the deriver."""
     extraction = HonchoLLMCallResponse(
         content=ExtractedRepresentation(
-            explicit=[
-                ExtractedObservation(content="Test observation from deriver")
-            ],
+            explicit=[ExtractedObservation(content="Test observation from deriver")],
         ),
         input_tokens=100,
         output_tokens=extraction_output_tokens,
@@ -625,9 +623,9 @@ class TestDeriverSummaryMetrics:
         delta = metric_checker.get_delta(
             deriver_tokens_processed_counter, labels, before
         )
-        assert (
-            delta == expected_messages_tokens
-        ), f"Expected messages input tokens {expected_messages_tokens}, got {delta}"
+        assert delta == expected_messages_tokens, (
+            f"Expected messages input tokens {expected_messages_tokens}, got {delta}"
+        )
         assert delta > 0, "Expected at least some message tokens to be tracked"
 
     async def test_summary_fallback_does_not_track(
@@ -697,12 +695,12 @@ class TestDeriverSummaryMetrics:
             deriver_tokens_processed_counter, prompt_labels, before_prompt
         )
 
-        assert (
-            output_delta == 0
-        ), f"Expected no output token change on fallback, got {output_delta}"
-        assert (
-            prompt_delta == 0
-        ), f"Expected no prompt token change on fallback, got {prompt_delta}"
+        assert output_delta == 0, (
+            f"Expected no output token change on fallback, got {output_delta}"
+        )
+        assert prompt_delta == 0, (
+            f"Expected no prompt token change on fallback, got {prompt_delta}"
+        )
 
 
 # =============================================================================
@@ -871,9 +869,9 @@ class TestDialecticTokenMetrics:
             dialectic_tokens_processed_counter, output_labels, before_output
         )
 
-        assert (
-            input_delta == 0
-        ), f"Expected no input token change when disabled, got {input_delta}"
-        assert (
-            output_delta == 0
-        ), f"Expected no output token change when disabled, got {output_delta}"
+        assert input_delta == 0, (
+            f"Expected no input token change when disabled, got {input_delta}"
+        )
+        assert output_delta == 0, (
+            f"Expected no output token change when disabled, got {output_delta}"
+        )

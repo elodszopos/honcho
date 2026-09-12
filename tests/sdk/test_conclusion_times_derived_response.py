@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sdks.python.src.honcho.api_types import ConclusionResponse
 from sdks.python.src.honcho.conclusions import Conclusion
@@ -12,7 +12,7 @@ def test_sdk_conclusion_exposes_times_derived() -> None:
         observed_id="observed",
         session_id="session-1",
         times_derived=7,
-        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
     conclusion = Conclusion.from_api_response(response)

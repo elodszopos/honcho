@@ -4,6 +4,7 @@ from .collection import (
     update_collection_internal_metadata,
 )
 from .deriver import (
+    cleanup_stale_work_units,
     get_deriver_metrics,
     get_deriver_status,
     get_queue_status,
@@ -18,8 +19,8 @@ from .document import (
     delete_documents,
     fetch_documents_by_ids,
     get_all_documents,
-    get_document,
     get_child_observations,
+    get_document,
     get_documents_by_ids,
     get_documents_with_filters,
     query_documents,
@@ -112,6 +113,7 @@ __all__ = [
     "get_or_create_collection",
     "update_collection_internal_metadata",
     # Deriver
+    "cleanup_stale_work_units",
     "get_deriver_metrics",
     "get_deriver_status",
     "get_queue_status",

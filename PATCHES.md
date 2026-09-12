@@ -24,9 +24,9 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
 | Fork point | `be543555` — upstream's tip; the backlog is closed |
-| Last upstream merge | tip, 2026-09-06 |
-| Carried surface | 87 files, +7,478 / -1,814 against `be543555`, measured after the commit that records it |
-| Collides with upstream | nothing ahead yet; the next pull's manifest comes from the gap report |
+| Last upstream merge | `8e386180`, 2026-09-12 |
+| Carried surface | 74 files, +4,601 / -1,835 against `8e386180`, measured after the commit that records it |
+| Collides with upstream | `src/reconciler/sync_vectors.py`, `src/deriver/queue_manager.py`, `mcp/package.json`; the next pull's manifest comes from the gap report |
 | Schema | unchanged; `migrations/` is byte-identical from the fork point through upstream's tip |
 
 ## Deliberately not carried
@@ -49,6 +49,8 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 - Upstream's tests that patch `crud.create_documents` — the summed-dedup-counts test, the
   batch-embed fallback pair, and the `DERIVER_DEDUPLICATE` forwarding pair. They exercise a
   function no production path reaches.
+- Upstream's `PromptRepresentation` conversion tests. `ExtractedRepresentation` replaced that
+  model and `from_prompt_representation` with it.
 - Per-observation embedding inside `agent_tools.create_observations`. The admission path lets
   `crud.create_observations` embed, so upstream's batch-with-single-item-fallback belongs to
   the write path this fork does not use.
@@ -120,6 +122,9 @@ overrides say nothing about what a merge would revert. The assertion lives in
   stated rather than asked about.
 - Deriver resilience: a per-work-unit timeout frees the worker slot instead of deadlocking
   the pool, and stale work-unit cleanup runs independently of pool capacity.
+- `has_pending_work` counts a retired row only behind an external vector store and only until
+  it is `purged`; upstream's unguarded check is always true against permanent retirement. Held
+  by `tests/reconciler/test_sync_vectors_enqueue_gate.py`.
 - Local-memory seed blocks stay stored and searchable while staying out of representation,
   summary, dream and queue generation.
 

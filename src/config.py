@@ -1,11 +1,11 @@
 import logging
 import math
 import os
+import tomllib
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, cast, get_args
 from urllib.parse import urlparse
 
-import tomllib
 from dotenv import load_dotenv
 from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -944,9 +944,9 @@ class DeriverSettings(HonchoSettings):
     # hardcoded 0.05 (near-verbatim only) -- paraphrase variants of the same
     # fact score farther apart and slip through. Distances are embedding-
     # model-specific: tune against LOG_OBSERVATIONS evidence, not by feel.
-    DEDUPLICATE_MAX_DISTANCE: Annotated[
-        float, Field(default=0.05, gt=0.0, le=1.0)
-    ] = 0.05
+    DEDUPLICATE_MAX_DISTANCE: Annotated[float, Field(default=0.05, gt=0.0, le=1.0)] = (
+        0.05
+    )
 
     LOG_OBSERVATIONS: bool = False
 
@@ -969,9 +969,7 @@ class DeriverSettings(HonchoSettings):
     # model. The deriver counts existing non-deleted observations for the
     # session and drops new ones once the cap is reached. 0 disables the cap
     # (the default -- enable via env if a real burst problem shows up).
-    MAX_OBSERVATIONS_PER_SESSION: Annotated[
-        int, Field(default=0, ge=0, le=10_000)
-    ] = 0
+    MAX_OBSERVATIONS_PER_SESSION: Annotated[int, Field(default=0, ge=0, le=10_000)] = 0
 
     # Minimum tokens a representation work unit must accumulate (summed over
     # its own unprocessed messages) before it becomes claimable. Bypassed by
@@ -1000,6 +998,8 @@ class DeriverSettings(HonchoSettings):
     FLUSH_ENABLED: bool = False
 
     BACKLOG_METRICS_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=30, ge=1)] = 30
+
+    SCHEDULER: Literal["api", "deriver"] = "deriver"
 
     @model_validator(mode="before")
     @classmethod
@@ -1381,6 +1381,7 @@ class DreamSettings(HonchoSettings):
     IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     DUE_POLL_INTERVAL_SECONDS: Annotated[int, Field(default=300, ge=1)] = 300
+    MAX_ENQUEUED_PER_POLL: Annotated[int, Field(default=100, gt=0, le=10_000)] = 100
     ENABLED_TYPES: list[str] = ["omni"]
 
     # Agent iteration limit - increased for extended reasoning workflow

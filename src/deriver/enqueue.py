@@ -2,6 +2,7 @@ import logging
 from typing import Any, Literal
 
 from sqlalchemy import exists, insert, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -35,7 +36,9 @@ def is_seeded_memory_message(message: dict[str, Any]) -> bool:
         return True
 
     content = message.get("content")
-    return isinstance(content, str) and content.lstrip().startswith("<prior_memory_file")
+    return isinstance(content, str) and content.lstrip().startswith(
+        "<prior_memory_file"
+    )
 
 
 async def enqueue(payload: list[dict[str, Any]]) -> None:
@@ -50,7 +53,9 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
     # This cancels dreams for all collections where observed=peer_name, which covers
     # both self-observation and peer-to-peer observation cases.
     dream_scheduler = get_dream_scheduler()
-    activity_payload = [message for message in payload if not is_seeded_memory_message(message)]
+    activity_payload = [
+        message for message in payload if not is_seeded_memory_message(message)
+    ]
     if dream_scheduler and activity_payload:
         cancelled_dreams: set[str] = set()
         for message in activity_payload:
@@ -585,6 +590,14 @@ async def enqueue_dream(
                 dream_type.value,
             )
 
+        except IntegrityError:
+            logger.debug(
+                "Dream already enqueued by another process: %s/%s/%s (type: %s)",
+                workspace_name,
+                observer,
+                observed,
+                dream_type.value,
+            )
         except Exception as e:
             logger.exception("Failed to enqueue dream task!")
             if settings.SENTRY.ENABLED:

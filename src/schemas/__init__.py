@@ -5,8 +5,8 @@ Re-exports all public names from submodules so that existing
 """
 
 from src.schemas.api import (
-    RESOURCE_NAME_PATTERN,
     AGENT_REMOVAL_CATEGORIES,
+    RESOURCE_NAME_PATTERN,
     SYSTEM_REMOVAL_CATEGORIES,
     Conclusion,
     ConclusionBatchCreate,

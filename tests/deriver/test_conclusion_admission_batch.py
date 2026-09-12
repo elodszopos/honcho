@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -27,7 +27,7 @@ def _message(message_id: int, peer_name: str, content: str) -> Message:
             peer_name=peer_name,
             content=content,
             token_count=5,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         ),
     )
 

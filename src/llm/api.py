@@ -50,9 +50,10 @@ M = TypeVar("M", bound=BaseModel)
 
 def is_transient_llm_error(exc: BaseException) -> bool:
     """A quota rejection stays rejected until its reset; only other failures earn a retry."""
-    if getattr(exc, "status_code", None) == 429 and "usage_limit_reached" in str(exc):
-        return False
-    return True
+    quota_rejection = getattr(exc, "status_code", None) == 429 and (
+        "usage_limit_reached" in str(exc)
+    )
+    return not quota_rejection
 
 
 def _message_chars(messages: list[dict[str, Any]] | None) -> int:

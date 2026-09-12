@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -80,7 +80,7 @@ async def tool_test_data(
     await db_session.flush()
 
     # Create messages in the session
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     messages: list[models.Message] = []
     for i in range(5):
         peer_name = peer2.name if i % 2 == 0 else peer1.name
@@ -409,7 +409,7 @@ class TestCreateObservations:
             session_name=session.name,
             workspace_name=workspace.name,
             message_ids=[101, 102],
-            message_created_at=str(datetime.now(timezone.utc)),
+            message_created_at=str(datetime.now(UTC)),
             run_id="deriver-run-1",
             parent_category="deriver",
             agent_model="test-model",
@@ -449,7 +449,7 @@ class TestCreateObservations:
                 session_name=session.name,
                 workspace_name=workspace.name,
                 message_ids=[1],
-                message_created_at=str(datetime.now(timezone.utc)),
+                message_created_at=str(datetime.now(UTC)),
                 run_id="run-1",
                 agent_model=None,
                 source_tool_call_id="tool-1",
@@ -489,7 +489,7 @@ class TestCreateObservations:
                 session_name=session.name,
                 workspace_name=workspace.name,
                 message_ids=[1],
-                message_created_at=str(datetime.now(timezone.utc)),
+                message_created_at=str(datetime.now(UTC)),
                 run_id=None,
                 agent_model="test-model",
                 source_tool_call_id="tool-1",
@@ -781,7 +781,7 @@ class TestSearchMemory:
                 content="Relevant fallback message",
                 seq_in_session=1,
                 token_count=5,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             return [([msg], [msg])]
 
@@ -947,7 +947,7 @@ class TestSearchMessagesTemporal:
                 content="Relevant temporal fallback message",
                 seq_in_session=1,
                 token_count=5,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             return [([msg], [msg])]
 
@@ -982,7 +982,7 @@ class TestGetMessagesByDateRange:
         ctx = make_tool_context()
 
         # Get messages from today
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = datetime.now(UTC).date().isoformat()
         result = await _handle_get_messages_by_date_range(
             ctx, {"after_date": today, "limit": 10}
         )
@@ -1483,7 +1483,7 @@ class TestExtractPreferences:
             content="I prefer brief responses and always include code examples",
             seq_in_session=100,
             token_count=20,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         db_session.add(preference_msg)
         await db_session.flush()
@@ -1532,7 +1532,7 @@ class TestExtractPreferences:
                 content=f"Relevant from {query}",
                 seq_in_session=1,
                 token_count=5,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             return [([msg], [])]
 

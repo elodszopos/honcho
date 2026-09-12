@@ -180,7 +180,9 @@ async def test_local_memory_file_upload_is_stored_but_not_queued_for_generation(
     db_session.add(test_session)
     await db_session.commit()
 
-    files = {"file": ("USER.md", io.BytesIO(b"User prefers concise replies."), "text/plain")}
+    files = {
+        "file": ("USER.md", io.BytesIO(b"User prefers concise replies."), "text/plain")
+    }
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
         files=files,
@@ -1199,9 +1201,7 @@ async def test_create_message_with_timestamp(
     await db_session.commit()
 
     # Use a specific timestamp for testing
-    custom_timestamp = datetime.datetime(
-        2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
-    )
+    custom_timestamp = datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
 
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
@@ -1245,9 +1245,7 @@ async def test_create_message_without_timestamp_uses_default(
     await db_session.commit()
 
     # Pad the window to absorb client/Postgres clock skew under Docker.
-    before_request = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-        seconds=1
-    )
+    before_request = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=1)
 
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
@@ -1262,9 +1260,7 @@ async def test_create_message_without_timestamp_uses_default(
         },
     )
 
-    after_request = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
-        seconds=1
-    )
+    after_request = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=1)
 
     assert response.status_code == 201
     data = response.json()
@@ -1296,12 +1292,10 @@ async def test_create_batch_messages_with_mixed_timestamps(
     await db_session.commit()
 
     # Use specific timestamps for testing
-    timestamp1 = datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
-    timestamp2 = datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    timestamp1 = datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
+    timestamp2 = datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.UTC)
 
-    before_request = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-        seconds=1
-    )
+    before_request = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=1)
 
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
@@ -1328,9 +1322,7 @@ async def test_create_batch_messages_with_mixed_timestamps(
         },
     )
 
-    after_request = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
-        seconds=1
-    )
+    after_request = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=1)
 
     assert response.status_code == 201
     data = response.json()
@@ -1373,9 +1365,7 @@ async def test_create_message_with_null_timestamp(
     db_session.add(test_session)
     await db_session.commit()
 
-    before_request = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-        seconds=1
-    )
+    before_request = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=1)
 
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
@@ -1391,9 +1381,7 @@ async def test_create_message_with_null_timestamp(
         },
     )
 
-    after_request = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
-        seconds=1
-    )
+    after_request = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=1)
 
     assert response.status_code == 201
     data = response.json()

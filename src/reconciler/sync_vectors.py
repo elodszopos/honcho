@@ -49,6 +49,35 @@ def backoff_eligible(
     )
 
 
+async def has_pending_work(db: AsyncSession) -> bool:
+    """True when a reconciliation cycle would find something to sync or clean up."""
+    checks = [
+        select(models.MessageEmbedding.id).where(
+            models.MessageEmbedding.sync_state == "pending",
+            backoff_eligible(models.MessageEmbedding.last_sync_at),
+        ),
+    ]
+    if get_external_vector_store() is not None:
+        # Retirement keeps the row and reclaims only its vector, which is external-store work;
+        # `purged` marks a row whose vector is already gone.
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=5)
+        checks.extend(
+            [
+                select(models.Document.id).where(
+                    models.Document.deleted_at.is_(None),
+                    models.Document.sync_state == "pending",
+                    backoff_eligible(models.Document.last_sync_at),
+                ),
+                select(models.Document.id).where(
+                    models.Document.deleted_at.is_not(None),
+                    models.Document.deleted_at < cutoff,
+                    models.Document.sync_state != "purged",
+                ),
+            ]
+        )
+    return any([await db.scalar(c.limit(1)) is not None for c in checks])
+
+
 @dataclass
 class ReconciliationMetrics:
     """Metrics for a reconciliation cycle."""
