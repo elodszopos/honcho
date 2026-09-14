@@ -1944,11 +1944,8 @@ async def _handle_search_memory(
             parent_category=ctx.parent_category,
         ):
             query_embedding = await embedding_client.embed(query)
-    except EmbeddingTokenLimitError:
-        return (
-            "ERROR: Query exceeds maximum token limit of "
-            + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
-        )
+    except EmbeddingTokenLimitError as e:
+        return f"ERROR: {e} Please use a shorter query."
     except ValueError as e:
         # Provider/config failure, not an oversized query. Keep returning a
         # string so the tool loop can continue, but don't blame the query.

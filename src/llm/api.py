@@ -580,6 +580,18 @@ async def honcho_llm_call(
         (time.perf_counter() - call_started) * 1000,
         _response_log_fields(result),
     )
+    if isinstance(result, HonchoLLMCallResponse) and result.output_tokens > max_tokens:
+        # max_tokens is a budget, not a ceiling: several backends accept the field and answer
+        # past it, and the Codex route rejects it outright. The overrun is only visible here.
+        logger.warning(
+            "llm.call over budget: trace=%s purpose=%s model=%s budget=%d output_tokens=%d ratio=%.2fx",
+            trace_name,
+            telemetry.call_purpose if telemetry is not None else None,
+            runtime_model_config.model,
+            max_tokens,
+            result.output_tokens,
+            result.output_tokens / max_tokens,
+        )
     return result
 
 

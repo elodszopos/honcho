@@ -786,7 +786,7 @@ class LLMSettings(HonchoSettings):
     GEMINI_BASE_URL: str | None = None
 
     # General LLM settings
-    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
+    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
 
     # Maximum characters for tool output to prevent token explosion.
     # Set to 10,000 chars (~2,500 tokens at 4 chars/token) to stay well under

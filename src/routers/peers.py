@@ -3,7 +3,6 @@
 import json
 import logging
 from collections.abc import AsyncIterator
-from contextlib import suppress
 from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
@@ -715,15 +714,23 @@ async def get_peer_context(
     try:
         embedding: list[float] | None = None
         if search_query:
-            with (
-                suppress(Exception),
-                embedding_call_purpose(
+            try:
+                with embedding_call_purpose(
                     EmbeddingCallPurpose.SEARCH_MEMORY.value,
                     workspace_name=workspace_id,
                     parent_category="api",
-                ),
-            ):
-                embedding = await embedding_client.embed(search_query)
+                ):
+                    embedding = await embedding_client.embed(search_query)
+            except Exception:
+                # Same contract as the search endpoint above: the request still answers from
+                # derived+recent retrieval, and the caller reads a 200 either way, so the
+                # degradation exists nowhere else.
+                logger.warning(
+                    "Peer context embedding failed for workspace %s,"
+                    + " degrading to non-semantic retrieval",
+                    workspace_id,
+                    exc_info=True,
+                )
 
         # Get the working representation
         representation = await crud.get_working_representation(
