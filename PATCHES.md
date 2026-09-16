@@ -25,7 +25,7 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 | Fork branch | `hermes` |
 | Fork point | `e5bbebdf` — upstream's tip; the backlog is closed |
 | Last upstream merge | `e5bbebdf`, 2026-09-16 |
-| Carried surface | 77 files, +5,070 / -1,929 against `e5bbebdf`, measured after the commit that records it; 19 further files are fork-only additions |
+| Carried surface | 77 files, +5,139 / -1,980 against `e5bbebdf`, measured after the commit that records it; 23 further files are fork-only additions |
 | Collides with upstream | the next pull's manifest comes from the gap report; nothing is outstanding |
 | Schema | unchanged; `migrations/` is byte-identical to `e5bbebdf`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
 
@@ -133,7 +133,17 @@ overrides say nothing about what a merge would revert. The assertion lives in
   its level's source requirement is returned as an `ObservationFailure` rather than stored.
   `create_observations` reports those in `failed`, which it previously hardcoded empty. The
   dreamer prompts carry upstream's matching rule that `[id:xxx]` must be copied exactly and
-  `search_messages` results cannot be cited.
+  `search_messages` results cannot be cited. It is a layer in front of `crud`'s reference guard,
+  not a duplicate of it: the filter rescues an observation by dropping only its fabricated ids,
+  and the guard still refuses the batch over anything unresolved, search receipts and
+  `source_message_ids` included.
+- `ConclusionCreateParams` is defined twice in each SDK. The exported one beside the scoped client
+  is the admission contract this server enforces; upstream's in the generated api types mirrors
+  upstream's looser server, reaches no caller, and is kept so the writing-contract bound is
+  asserted on it too.
+- A pair-scoped conclusions view answers for its own pair only, `lineage` included; the
+  workspace-level view is where a cross-pair read belongs. Upstream scopes `get` this way and
+  the fork's lineage route follows it.
 - Two collision points re-decide retirement on every pull, because upstream writes
   `Document.deleted_at` inline where the fork routes through `soft_delete_documents`: the
   semantic-duplicate replacement in `crud.document`, and the scope cascade in

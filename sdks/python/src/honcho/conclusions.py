@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from pydantic import BaseModel, Field, model_validator
 
 from .api_types import (
@@ -84,9 +84,22 @@ def _get_conclusion(honcho: "Honcho", conclusion_id: str) -> Conclusion:
     return _conclusion_from_item(data)
 
 
+def _get_lineage(honcho: "Honcho", conclusion_id: str) -> ConclusionLineage:
+    honcho._ensure_workspace()
+    data = honcho._http.get(
+        routes.conclusion_lineage(honcho.workspace_id, conclusion_id)
+    )
+    return ConclusionLineage.from_lineage_response(
+        ConclusionLineageResponse.model_validate(data)
+    )
+
+
+_ConclusionT = TypeVar("_ConclusionT", bound="Conclusion")
+
+
 def _require_view(
-    conclusion: Conclusion, observer_id: str, observed_id: str
-) -> Conclusion:
+    conclusion: _ConclusionT, observer_id: str, observed_id: str
+) -> _ConclusionT:
     if conclusion.observer_id != observer_id or conclusion.observed_id != observed_id:
         raise NotFoundError("Conclusion not found")
     return conclusion
@@ -402,6 +415,10 @@ class WorkspaceConclusions:
         """Get multiple conclusions by ID. Missing IDs are omitted."""
         return _get_many_conclusions(self._honcho, conclusion_ids)
 
+    def lineage(self, conclusion_id: str) -> ConclusionLineage:
+        """Get one conclusion's full ledger by ID, anywhere in the workspace."""
+        return _get_lineage(self._honcho, conclusion_id)
+
     def __repr__(self) -> str:
         return f"WorkspaceConclusions(workspace_id={self.workspace_id!r})"
 
@@ -712,13 +729,15 @@ class ConclusionsView:
         Returns how it was admitted, every prior formulation it was rewritten from,
         everything it absorbed with the count each brought, and why it was removed if
         it was. Retired conclusions are only reachable here, never through search.
+
+        Raises:
+            NotFoundError: If the conclusion belongs to another observer/observed
+                pair. Use ``honcho.conclusions.lineage`` for a workspace-wide read.
         """
-        self._honcho._ensure_workspace()
-        data = self._honcho._http.get(
-            routes.conclusion_lineage(self.workspace_id, conclusion_id)
-        )
-        return ConclusionLineage.from_lineage_response(
-            ConclusionLineageResponse.model_validate(data)
+        return _require_view(
+            _get_lineage(self._honcho, conclusion_id),
+            self.observer,
+            self.observed,
         )
 
     def create(

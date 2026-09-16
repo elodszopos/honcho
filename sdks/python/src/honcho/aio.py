@@ -1841,6 +1841,16 @@ async def _aget_conclusion(honcho: "Honcho", conclusion_id: str) -> Conclusion:
     return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
 
 
+async def _aget_lineage(honcho: "Honcho", conclusion_id: str) -> ConclusionLineage:
+    await honcho._ensure_workspace_async()
+    data = await honcho._async_http_client.get(
+        routes.conclusion_lineage(honcho.workspace_id, conclusion_id)
+    )
+    return ConclusionLineage.from_lineage_response(
+        ConclusionLineageResponse.model_validate(data)
+    )
+
+
 async def _aget_many_conclusions(
     honcho: "Honcho",
     conclusion_ids: list[str],
@@ -1943,6 +1953,10 @@ class WorkspaceConclusionsAio:
     async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
         """Get multiple conclusions by ID. Missing IDs are omitted."""
         return await _aget_many_conclusions(self._workspace._honcho, conclusion_ids)
+
+    async def lineage(self, conclusion_id: str) -> ConclusionLineage:
+        """Get one conclusion's full ledger by ID, anywhere in the workspace."""
+        return await _aget_lineage(self._workspace._honcho, conclusion_id)
 
 
 class ConclusionsViewAio:
@@ -2151,13 +2165,16 @@ class ConclusionsViewAio:
         )
 
     async def lineage(self, conclusion_id: str) -> ConclusionLineage:
-        """Get one conclusion's full ledger asynchronously, live or retired."""
-        await self._view._honcho._ensure_workspace_async()
-        data = await self._view._honcho._async_http_client.get(
-            routes.conclusion_lineage(self._view.workspace_id, conclusion_id)
-        )
-        return ConclusionLineage.from_lineage_response(
-            ConclusionLineageResponse.model_validate(data)
+        """Get one conclusion's full ledger asynchronously, live or retired.
+
+        Raises:
+            NotFoundError: If the conclusion belongs to another observer/observed
+                pair. Use ``honcho.aio.conclusions.lineage`` for a workspace-wide read.
+        """
+        return _require_view(
+            await _aget_lineage(self._view._honcho, conclusion_id),
+            self._view.observer,
+            self._view.observed,
         )
 
     async def create(

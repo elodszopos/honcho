@@ -37,6 +37,7 @@ from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_admin_jwt, create_jwt
+from tests.tracked_db_patch import patch_tracked_db
 
 # Disable Langfuse for the whole suite before importing src.main: @conditional_observe
 # binds to settings.LANGFUSE_PUBLIC_KEY at import time, so blanking it here keeps mocked
@@ -924,61 +925,15 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
 
 @pytest.fixture(autouse=True)
 def mock_tracked_db(request: pytest.FixtureRequest):
-    """Mock tracked_db to create fresh sessions per call.
-
-    Using a session factory instead of a shared session avoids asyncio lock
-    errors when multiple tracked_db calls run concurrently via asyncio.gather.
-    """
+    """Point tracked_db at the per-test database, one session per call."""
     if not _requires_runtime_mocks(_get_nodeid(request)):
         yield
         return
 
-    from contextlib import ExitStack, asynccontextmanager
-
-    db_engine = request.getfixturevalue("db_engine")
-    session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
-
-    @asynccontextmanager
-    async def mock_tracked_db_context(_: str | None = None, *, read_only: bool = False):
-        # read_only is accepted (and ignored): in tests both engines resolve to
-        # the same per-test database session.
-        del read_only
-        async with session_factory() as session:
-            yield session
-
-    # Each module imports tracked_db by name, so patch every import site.
-    # Use ExitStack (not a parenthesized `with`) to stay under CPython's
-    # 20-statically-nested-block limit as this list grows.
-    tracked_db_targets = [
-        "src.dependencies.tracked_db",
-        "src.deriver.queue_manager.tracked_db",
-        "src.deriver.consumer.tracked_db",
-        "src.deriver.deriver.tracked_db",
-        "src.deriver.enqueue.tracked_db",
-        "src.routers.peers.tracked_db",
-        "src.routers.workspaces.tracked_db",
-        "src.crud.representation.tracked_db",
-        "src.dreamer.orchestrator.tracked_db",
-        "src.dreamer.dream_scheduler.tracked_db",
-        "src.dialectic.chat.tracked_db",
-        "src.utils.summarizer.tracked_db",
-        "src.webhooks.events.tracked_db",
-        "src.webhooks.webhook_delivery.tracked_db",
-        "src.utils.agent_tools.tracked_db",
-        "src.utils.search.tracked_db",
-        "src.crud.document.tracked_db",
-        "src.crud.message.tracked_db",
-        "src.reconciler.sync_vectors.tracked_db",
-        "src.reconciler.embed_now.tracked_db",
-        "src.dialectic.core.tracked_db",
-        "src.dreamer.specialists.tracked_db",
-        "src.dreamer.surprisal.tracked_db",
-        "src.deriver.scope_backfill.tracked_db",
-    ]
-    with ExitStack() as stack:
-        for target in tracked_db_targets:
-            stack.enter_context(patch(target, mock_tracked_db_context))
+    with patch_tracked_db(request.getfixturevalue("db_engine")):
         yield
+
+
 
 
 @pytest.fixture(autouse=True)

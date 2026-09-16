@@ -345,9 +345,16 @@ export class ConclusionsView {
     conclusionId: string
   ): Promise<ConclusionLineageResponse> {
     await this._ensureWorkspace()
-    return this._http.get<ConclusionLineageResponse>(
+    const item = await this._http.get<ConclusionLineageResponse>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}/lineage`
     )
+    if (
+      item.observer_id !== this.observer ||
+      item.observed_id !== this.observed
+    ) {
+      throw new NotFoundError('Conclusion not found')
+    }
+    return item
   }
 
   private async _getRepresentation(
@@ -821,6 +828,17 @@ export class WorkspaceConclusions {
       )
     }
     return conclusions
+  }
+
+  /**
+   * Get one conclusion's full ledger by ID, anywhere in the workspace.
+   */
+  async lineage(conclusionId: string): Promise<ConclusionLineage> {
+    await this._ensureWorkspace()
+    const item = await this._http.get<ConclusionLineageResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}/lineage`
+    )
+    return ConclusionLineage.fromLineageResponse(item)
   }
 
   toString(): string {

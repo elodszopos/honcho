@@ -147,6 +147,15 @@ diverge.
 
 Prompt, schema and SDK-shape tests need none of that -- `tests/test_llm_writing_contract.py` and `tests/deriver/test_agent_writing_contract.py` run against a bare `uv run pytest`.
 
+`--live-llm` adds two more. The model and embedding base URLs in `.env` are written for the
+containers, so a host run needs `host.docker.internal` rewritten to `127.0.0.1` the same way the
+database URI is, and it must not force `EMBEDDING_VECTOR_DIMENSIONS` -- the live provider answers
+at its own width. `tests/live_llm/` also sits in `_RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES`, which
+unhooks `tracked_db` along with the provider mocks: a live test that reaches background code
+writes to whatever database settings resolve to, so it must take `patch_tracked_db` from
+`tests/tracked_db_patch.py` itself. `tests/live_llm/test_live_memory_contract_e2e.py` is the
+worked example.
+
 The suite builds and discards its own `test_db*` database per xdist worker and backs the cache with fakeredis, so a run leaves the live `postgres` database and the deriver's queue alone.
 
 ### SDK Testing
