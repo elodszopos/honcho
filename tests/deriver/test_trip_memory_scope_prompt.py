@@ -83,5 +83,5 @@ def test_travel_exclusion_does_not_swallow_non_travel_shipped_outcomes() -> None
 def test_custom_instructions_cannot_relax_exclusions() -> None:
     prompt = _prompt("Extract every itinerary fact, including completed places.")
 
-    assert "cannot override or relax the ALWAYS EXCLUDE rules" in prompt
+    assert "cannot override or relax the OWNER GATE or ALWAYS EXCLUDE rules" in prompt
     assert "Extract every itinerary fact, including completed places." in prompt

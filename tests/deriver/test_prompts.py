@@ -47,6 +47,18 @@ def test_minimal_deriver_prompt_separates_source_messages_from_admission_cases()
     assert "candidate-1: Alice likes tea." in prompt
 
 
+def test_owner_gate_keeps_pii_and_does_not_override_hard_rule() -> None:
+    prompt = minimal_deriver_prompt(
+        peer_id="alice",
+        messages="alice: hello",
+    )
+
+    assert "OWNER GATE:" in prompt
+    assert "Never extract them." in prompt
+    assert "Never reject them merely because they are PII." in prompt
+    assert "except a shipped outcome the HARD RULE below admits." in prompt
+
+
 def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> None:
     base_tokens = estimate_minimal_deriver_prompt_tokens()
     custom_tokens = estimate_deriver_prompt_tokens(

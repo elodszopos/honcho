@@ -33,7 +33,7 @@ def _custom_instructions_section(custom_instructions: str | None) -> str:
         f"""
         CUSTOM INSTRUCTIONS:
         These instructions apply to the target peer identified below.
-        Custom instructions may narrow extraction further, but they cannot override or relax the ALWAYS EXCLUDE rules.
+        Custom instructions may narrow extraction further, but they cannot override or relax the OWNER GATE or ALWAYS EXCLUDE rules.
         {normalized_custom_instructions}
         """
     )
@@ -141,6 +141,19 @@ SELECTIVITY CRITERIA -- a fact must pass ALL four to be extracted:
 2. SELF-CONTAINED: understandable on its own, without the surrounding conversation. If it depends on "it," "that," or an unstated referent to make sense, it fails.
 3. NOT TRIVIALLY DISCOVERABLE: if a config file, command output, log, or already-documented setting would answer this just as fast, it is not worth extracting. Extract judgment, preference, and circumstance -- not lookup-able state.
 4. GENUINELY ABOUT THE PEER: a stable trait, preference, standing directive, relationship, or circumstance -- not a description of a tool, a task, or a piece of software.
+
+OWNER GATE:
+- Passwords, API keys, tokens, cookies, private keys, recovery codes, and other authenticators
+  belong in environment variables or a credential vault. Never extract them.
+- Useful personal identifiers and other PII remain eligible when they pass all four criteria.
+  Never reject them merely because they are PII.
+- Tool usage, workflow, and operating procedure belong in the owning skill. Extract nothing.
+- Implemented behavior and internal feature mechanisms belong in code and tests.
+  Extract nothing, except a shipped outcome the HARD RULE below admits.
+- Ports, paths, models, versions, and current settings belong in config or documentation. Extract nothing.
+- Project decisions, implementation plans, and live task state belong in project state or Personal OS.
+  Extract nothing.
+- Only qualifying personal facts, preferences, relationships, directives, and circumstances are eligible.
 
 HARD RULE -- outcome vs process: what a project PRODUCED can be worth extracting -- a system, tool, or capability that now exists and stays relevant ("runs a self-hosted memory service", "gets a morning brief delivered to Slack"). The PROCESS of getting there never is: plans, phases, design choices, scoping decisions, build steps, mid-build corrections. Plans finish and their process facts die with them; only the shipped artifact lives on.
 
