@@ -124,6 +124,7 @@ async def _create_document(
     embedding: list[float] | None = None,
     internal_metadata: dict[str, Any] | None = None,
     source_ids: list[str] | None = None,
+    legacy_source_ids: list[str] | None = None,
 ) -> models.Document:
     doc = models.Document(
         workspace_name=workspace_name,
@@ -135,6 +136,7 @@ async def _create_document(
         embedding=embedding if embedding is not None else _embedding(),
         internal_metadata=internal_metadata or {},
         source_ids=source_ids,
+        legacy_source_ids=legacy_source_ids,
     )
     db_session.add(doc)
     await db_session.commit()
@@ -741,7 +743,7 @@ async def test_removal_cascades_to_dependent_derived_docs_only(
         session_name=None,
         content="unrelated deduction",
         level="deductive",
-        source_ids=["some-other-doc-id-not-removed"],
+        source_ids=[generate_nanoid()],
     )
 
     copy_id, dependent_id, unrelated_id = copy.id, dependent.id, unrelated.id
@@ -767,6 +769,68 @@ async def test_removal_cascades_to_dependent_derived_docs_only(
     assert deleted_at_by_id[copy_id] is not None
     assert deleted_at_by_id[dependent_id] is not None
     assert deleted_at_by_id[unrelated_id] is None
+
+
+async def test_removal_cascades_undrained_legacy_column(
+    db_session: AsyncSession,
+    sample_data: tuple[models.Workspace, models.Peer],
+):
+    """has_any on the JSONB column is the any-overlap form of contains([id])."""
+    test_workspace, sender = sample_data
+    workspace_name = test_workspace.name
+    scope_name = str(generate_nanoid())
+    scope_peer = await _create_scope_peer(db_session, workspace_name, scope_name)
+    session = await _create_session(db_session, workspace_name)
+    await _join_scope(db_session, workspace_name, session.name, scope_peer.name)
+    await _create_collection(
+        db_session, workspace_name, observer=sender.name, observed=sender.name
+    )
+    await _create_collection(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+    await _create_document(
+        db_session,
+        workspace_name,
+        observer=sender.name,
+        observed=sender.name,
+        session_name=session.name,
+    )
+
+    await process_scope_backfill(
+        ScopeBackfillPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+    [copy] = await _get_docs(
+        db_session, workspace_name, observer=scope_peer.name, observed=sender.name
+    )
+
+    dependent = await _create_document(
+        db_session,
+        workspace_name,
+        observer=scope_peer.name,
+        observed=sender.name,
+        session_name=None,
+        content="undrained deduction resting on removed evidence",
+        level="deductive",
+        legacy_source_ids=[copy.id],
+    )
+    copy_id, dependent_id = copy.id, dependent.id
+
+    await process_scope_removal(
+        ScopeRemovalPayload(scope_peer=scope_peer.name, session_name=session.name),
+        workspace_name,
+    )
+
+    result = await db_session.execute(
+        select(models.Document.id, models.Document.deleted_at).where(
+            models.Document.workspace_name == workspace_name,
+            models.Document.observer == scope_peer.name,
+            models.Document.observed == sender.name,
+        )
+    )
+    deleted_at_by_id = {row[0]: row[1] for row in result.all()}
+    assert deleted_at_by_id[copy_id] is not None
+    assert deleted_at_by_id[dependent_id] is not None
 
 
 # ---------------------------------------------------------------------------

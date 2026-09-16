@@ -134,7 +134,9 @@ async def test_admission_is_batched_and_persisted_once_with_candidate_source_ids
     ):
         assert getattr(admission_telemetry, field) == getattr(
             extraction_telemetry, field
-        ), f"admission telemetry dropped {field}; its spend would not group with the session"
+        ), (
+            f"admission telemetry dropped {field}; its spend would not group with the session"
+        )
 
     admission_prompt = llm_call.await_args_list[1].kwargs["prompt"]
     assert "[message_id:11]" in admission_prompt

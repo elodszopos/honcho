@@ -37,7 +37,14 @@ Usage:
         print(p.id)
 """
 
-from .aio import ConclusionsViewAio, HonchoAio, PeerAio, ScopeAio, SessionAio
+from .aio import (
+    ConclusionsViewAio,
+    HonchoAio,
+    PeerAio,
+    ScopeAio,
+    SessionAio,
+    WorkspaceConclusionsAio,
+)
 from .api_types import (
     Evidence,
     EvidenceMessageRef,
@@ -50,7 +57,12 @@ from .api_types import (
 )
 from .base import PeerBase, ScopeBase, SessionBase
 from .client import Honcho
-from .conclusions import Conclusion, ConclusionLineage, ConclusionsView
+from .conclusions import (
+    Conclusion,
+    ConclusionLineage,
+    ConclusionsView,
+    WorkspaceConclusions,
+)
 from .http.client import __version__ as __version__
 from .http.exceptions import (
     APIError,
@@ -95,6 +107,7 @@ __all__ = [
     "Conclusion",
     "ConclusionLineage",
     "ConclusionsView",
+    "WorkspaceConclusions",
     "Message",
     "MessageCreateParams",
     "Peer",
@@ -102,6 +115,7 @@ __all__ = [
     "Session",
     # Aio views (for type hints)
     "ConclusionsViewAio",
+    "WorkspaceConclusionsAio",
     "HonchoAio",
     "PeerAio",
     "ScopeAio",

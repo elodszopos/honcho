@@ -23,11 +23,11 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `be543555` — last full catch-up; upstream's tip is `e5bbebdf`, two attribution commits ahead |
-| Last upstream merge | `09421ddd`, 2026-09-16 |
-| Carried surface | 74 files, +4,574 / -1,866 against `09421ddd`, measured after the commit that records it; 17 further files are fork-only additions |
-| Collides with upstream | the deferred attribution pull (`09421ddd..e5bbebdf`) lands on 21 carried files: `src/crud/document.py`, `src/utils/{agent_tools,representation}.py`, `src/schemas/{api,internal}.py`, `src/routers/conclusions.py`, `src/deriver/{consumer,scope_backfill}.py`, `src/dreamer/specialists.py`, the Python SDK `{__init__,aio,api_types,conclusions}`, the TS SDK `{conclusions,index,types/api}`, and five of their test files |
-| Schema | unchanged vs `09421ddd`; the deferred `e5bbebdf` adds `a7c3e9f1b2d4_add_document_sources_table.py`, so this is no longer true through upstream's tip |
+| Fork point | `e5bbebdf` — upstream's tip; the backlog is closed |
+| Last upstream merge | `e5bbebdf`, 2026-09-16 |
+| Carried surface | 77 files, +5,070 / -1,929 against `e5bbebdf`, measured after the commit that records it; 19 further files are fork-only additions |
+| Collides with upstream | the next pull's manifest comes from the gap report; nothing is outstanding |
+| Schema | unchanged; `migrations/` is byte-identical to `e5bbebdf`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
 
 ## Deliberately not carried
 
@@ -52,6 +52,11 @@ One entry, one verdict: what the fork does, why upstream's version loses.
   function no production path reaches.
 - Upstream's `PromptRepresentation` conversion tests. `ExtractedRepresentation` replaced that
   model and `from_prompt_representation` with it.
+- The dreamer rule telling the model to "delete outdated observations - don't leave
+  duplicates". Retirement is permanent here and nothing reaps, so a model acting on that
+  instruction mints removals with no ledger reason. The fork's rule in that slot is to use
+  `enrich`, which absorbs the duplicate and moves its derivation count, and not to delete the
+  target separately. Upstream's neighbouring rules in the same list are carried.
 - Per-observation embedding inside `agent_tools.create_observations`. The admission path lets
   `crud.create_observations` embed, so upstream's batch-with-single-item-fallback belongs to
   the write path this fork does not use.
@@ -70,6 +75,7 @@ overrides say nothing about what a merge would revert. The assertion lives in
 | `DERIVER.MAX_OBSERVATIONS_PER_SESSION` | 0, off | key does not exist |
 | `MAX_CONCLUSION_CHARS` / `CONCLUSION_TARGET_CHARS` | 800 / 500, declared in `src/writing_contract.py` and asserted in `tests/test_llm_writing_contract.py` | 65535, storage ceiling only |
 | SDK version | 2.4.0, the version Hermes pins | upstream's own release cadence |
+| Grounded sources required of an inductive conclusion | 2, mirroring `ConclusionCreate` | 1 |
 
 ## Non-obvious adaptations
 
@@ -113,6 +119,30 @@ overrides say nothing about what a merge would revert. The assertion lives in
   removes the misspelled-subject variants and the near-duplicate churn they caused.
 - `ConclusionCreate` carries `times_derived` and `source_ids`, so a consolidation merge
   keeps the accumulated reinforcement and provenance of what it merged.
+- Provenance lives in upstream's `document_sources` edge table, adopted whole rather than kept
+  as the fork's JSONB column. `Document.legacy_source_ids` maps the old `source_ids` column and
+  a `source_ids` property coalesces table, column and legacy `internal_metadata` keys, so reads
+  work mid-drain. The migration is DDL only; `reconciler.backfill_document_sources` drains the
+  column asynchronously, and every traversal (`get_child_observations`, the scope cascade)
+  matches the table `or` the legacy column until it finishes; linkage that only ever lived in
+  `internal_metadata` reads through the property but not through those walks until it drains.
+  The column and its GIN index cannot be dropped until upstream's follow-up migration, so do
+  not treat them as dead.
+- Cited `source_ids` are grounded before admission. Upstream's `_filter_ungrounded_source_ids`
+  runs on the fork's admission path: fabricated ids are stripped, and an observation left below
+  its level's source requirement is returned as an `ObservationFailure` rather than stored.
+  `create_observations` reports those in `failed`, which it previously hardcoded empty. The
+  dreamer prompts carry upstream's matching rule that `[id:xxx]` must be copied exactly and
+  `search_messages` results cannot be cited.
+- Two collision points re-decide retirement on every pull, because upstream writes
+  `Document.deleted_at` inline where the fork routes through `soft_delete_documents`: the
+  semantic-duplicate replacement in `crud.document`, and the scope cascade in
+  `deriver.scope_backfill`, where upstream turns the cascade select into an
+  `UPDATE ... RETURNING`. The fork keeps both as selects, because the shared tail feeds every
+  id to `soft_delete_documents` and an inline update would retire the row twice with no ledger.
+- `GET /conclusions/{id}` and `GET /conclusions/{id}/lineage` are both live: upstream's reads
+  the live pool and 404s on a retired row, the fork's returns the retired row with its ledger.
+  Upstream's own soft-delete route test asserts the 404, so it also pins that split.
 - A 429 whose body says `usage_limit_reached` is never retried (`is_transient_llm_error`),
   and the OpenAI clients are built with `max_retries=0` so the tenacity wrapper is the only
   retry policy.
@@ -159,6 +189,14 @@ overrides say nothing about what a merge would revert. The assertion lives in
   typecheck reads `dist/`, so the SDK must be built first.
 - `src/routers/messages.py` widens upstream's enqueue payload with the message metadata, which
   is how `is_seeded_memory_message` sees a local-memory seed block.
+- Upstream tests that create a conclusion arrive without the admission envelope, because
+  upstream has no such contract: they fail on `action`, `reason_for_entry`, `search_query`,
+  `searched_conclusion_ids`, `entry_origin`, `agent_trace_id`, `agent_model` long before
+  reaching what they mean to assert, and a route-level delete fails for want of a removal
+  envelope. Adapt them rather than drop them — the helpers exist (`_operator_conclusion` in
+  `tests/sdk`, `operatorConclusion` in the TS tests) and the behaviour under test is usually
+  one the fork wants covered. Watch for the inverse too: an auto-merge that keeps the fork's
+  fixture and appends upstream's assertions produces a test that contradicts itself.
 - Python 3.13 for the server: `.python-version`, the root `requires-python` and the project
   environment all match the `python:3.13-slim` containers and the agent's own interpreter,
   adopted ahead of the merge rather than during it. The suite passes on 3.13 unchanged, so

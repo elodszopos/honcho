@@ -397,7 +397,9 @@ async def process_representation_tasks_batch(
                     observers=observers,
                     observed=observed,
                     source_message_ids=[
-                        m.public_id for m in messages if m.id in queue_item_message_ids_set
+                        m.public_id
+                        for m in messages
+                        if m.id in queue_item_message_ids_set
                     ],
                     queue_item_ids=queue_item_ids or [],
                     track_name="Conclusion Admission",

@@ -80,6 +80,8 @@ def list_conclusions(
                 "observer_id": c.observer_id,
                 "observed_id": c.observed_id,
                 "session_id": c.session_id,
+                "times_derived": c.times_derived,
+                "source_ids": c.source_ids,
                 "created_at": str(c.created_at),
             }
             for c in conclusions
@@ -93,6 +95,7 @@ def list_conclusions(
                 "observer_id",
                 "observed_id",
                 "session_id",
+                "times_derived",
                 "created_at",
             ],
             title="Conclusions",
@@ -136,13 +139,22 @@ def search(
                 "observer_id": c.observer_id,
                 "observed_id": c.observed_id,
                 "session_id": c.session_id,
+                "times_derived": c.times_derived,
+                "source_ids": c.source_ids,
                 "created_at": str(c.created_at),
             }
             for c in results
         ]
         print_result(
             items,
-            columns=["id", "content", "workspace_id", "session_id", "created_at"],
+            columns=[
+                "id",
+                "content",
+                "workspace_id",
+                "session_id",
+                "times_derived",
+                "created_at",
+            ],
             title=f"Conclusion search: {query}",
         )
     except Exception as e:

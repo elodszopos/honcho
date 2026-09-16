@@ -252,8 +252,8 @@ class TestCreateObservations:
     async def test_dialectic_context_forces_deductive(
         self,
         db_session: AsyncSession,
-        make_tool_context: Callable[..., ToolContext],
         tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
     ):
         """Dialectic context (no current_messages) forces observations to be deductive."""
         *_, documents = tool_test_data
@@ -266,7 +266,7 @@ class TestCreateObservations:
                 "observations": [
                     {
                         "content": "Inferred preference for quiet spaces",
-                        "source_ids": source_ids,
+                        "source_ids": list(source_ids),
                         "premises": [
                             "User mentioned working in libraries",
                             "User avoids noisy cafes",
@@ -325,13 +325,12 @@ class TestCreateObservations:
     async def test_source_ids_display_prefix_is_stripped(
         self,
         db_session: AsyncSession,
-        make_tool_context: Callable[..., ToolContext],
         tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
     ):
         """Models sometimes copy the '[id:xxx]' display format into source_ids;
         the prefix must be stripped so provenance links reference real IDs."""
         *_, documents = tool_test_data
-        source_ids = [documents[0].id, documents[1].id]
         ctx = make_tool_context(current_messages=None)
 
         result = await _handle_create_observations(
@@ -340,7 +339,10 @@ class TestCreateObservations:
                 "observations": [
                     {
                         "content": "Inferred preference for early mornings",
-                        "source_ids": [f"id:{source_ids[0]}", f"ID:{source_ids[1]}"],
+                        "source_ids": [
+                            f"id:{documents[0].id}",
+                            f"ID:{documents[1].id}",
+                        ],
                         "premises": [
                             "User schedules meetings before 9am",
                             "User mentions waking at 5:30",
@@ -361,7 +363,292 @@ class TestCreateObservations:
         )
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
-        assert doc.source_ids == source_ids
+        assert doc.source_ids == [documents[0].id, documents[1].id]
+
+    async def test_fabricated_source_ids_reject_ungrounded_observation(
+        self,
+        db_session: AsyncSession,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """An observation whose cited source_ids resolve to no existing
+        documents must be rejected and surfaced as a failure, not persisted
+        with false provenance."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Conclusion citing invented evidence",
+                        "source_ids": [
+                            "fabricated-id-that-does-not-exist-1",
+                            "fabricated-id-that-does-not-exist-2",
+                        ],
+                        "premises": ["Premise that was never observed"],
+                        "action": "create",
+                        "reason_for_entry": "Deduction offered from cited evidence",
+                        "search_query": "invented evidence",
+                        "searched_conclusion_ids": [],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 0 observations" in result
+        assert "source_ids" in str(result)
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Conclusion citing invented evidence"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is None
+
+    async def test_fabricated_source_ids_stripped_when_real_source_remains(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Fabricated ids are dropped while the observation survives on its
+        remaining real sources."""
+        *_, documents = tool_test_data
+        real_id = documents[0].id
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Conclusion citing mixed evidence",
+                        "source_ids": [real_id, "fabricated-id-that-does-not-exist"],
+                        "premises": ["User likes coffee"],
+                        "action": "create",
+                        "reason_for_entry": "Deduction resting on one real source",
+                        "search_query": "coffee preference",
+                        "searched_conclusion_ids": [],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Conclusion citing mixed evidence"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert doc.source_ids == [real_id]
+
+    async def test_contradiction_rejected_when_only_one_real_source_remains(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A contradiction must still have two real sources after fabricated
+        source IDs are removed."""
+        *_, documents = tool_test_data
+        real_id = documents[0].id
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Conflicting claims with one invented citation",
+                        "level": "contradiction",
+                        "source_ids": [
+                            real_id,
+                            "fabricated-id-that-does-not-exist",
+                        ],
+                        "sources": [
+                            "The user said they prefer tea",
+                            "The user said they prefer coffee",
+                        ],
+                        "action": "create",
+                        "reason_for_entry": "Contradiction between two stated preferences",
+                        "search_query": "tea versus coffee",
+                        "searched_conclusion_ids": [],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 0 observations" in result
+        assert "Failed 1" in result
+        assert "requires at least 2 real source(s)" in str(result)
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Conflicting claims with one invented citation"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is None
+
+    async def test_inductive_rejected_when_only_one_real_source_remains(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """An inductive observation must still have two real sources after
+        fabricated source IDs are removed. Otherwise ConclusionCreate raises
+        and the whole batch dies."""
+        *_, documents = tool_test_data
+        real_id = documents[0].id
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Pattern claimed from one invented citation",
+                        "level": "inductive",
+                        "source_ids": [
+                            real_id,
+                            "fabricated-id-that-does-not-exist",
+                        ],
+                        "sources": [
+                            "The user said they prefer tea",
+                            "The user said they prefer coffee",
+                        ],
+                        "pattern_type": "preference",
+                        "confidence": "low",
+                        "action": "create",
+                        "reason_for_entry": "Pattern offered from two cited sources",
+                        "search_query": "tea versus coffee",
+                        "searched_conclusion_ids": [],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 0 observations" in result
+        assert "Failed 1" in result
+        assert "requires at least 2 real source(s)" in str(result)
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Pattern claimed from one invented citation"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is None
+
+    async def test_inductive_failure_does_not_abort_grounded_sibling(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A half-fabricated inductive write must land in failed, not raise
+        through the batch and drop a grounded sibling."""
+        *_, documents = tool_test_data
+        real_id = documents[0].id
+        sibling_id = documents[1].id
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Grounded sibling of a broken induction",
+                        "source_ids": [sibling_id],
+                        "premises": ["User works remotely"],
+                        "action": "create",
+                        "reason_for_entry": "Deduction resting on a real source",
+                        "search_query": "remote work",
+                        "searched_conclusion_ids": [],
+                    },
+                    {
+                        "content": "Broken induction in a mixed batch",
+                        "level": "inductive",
+                        "source_ids": [
+                            real_id,
+                            "fabricated-id-that-does-not-exist",
+                        ],
+                        "sources": [
+                            "The user said they prefer tea",
+                            "The user said they prefer coffee",
+                        ],
+                        "pattern_type": "preference",
+                        "confidence": "low",
+                        "action": "create",
+                        "reason_for_entry": "Pattern offered from two cited sources",
+                        "search_query": "tea versus coffee",
+                        "searched_conclusion_ids": [],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+        assert "Failed 1" in result
+
+        stmt = select(models.Document).where(
+            models.Document.content.in_(
+                [
+                    "Grounded sibling of a broken induction",
+                    "Broken induction in a mixed batch",
+                ]
+            )
+        )
+        docs = (await db_session.execute(stmt)).scalars().all()
+        assert len(docs) == 1
+        assert docs[0].content == "Grounded sibling of a broken induction"
+
+    async def test_mixed_batch_keeps_grounded_rejects_ungrounded(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A batch mixing grounded and ungrounded observations persists only
+        the grounded one and reports the other as failed."""
+        *_, documents = tool_test_data
+        real_id = documents[1].id
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Grounded conclusion",
+                        "source_ids": [real_id],
+                        "premises": ["User works remotely"],
+                        "action": "create",
+                        "reason_for_entry": "Deduction resting on a real source",
+                        "search_query": "remote work",
+                        "searched_conclusion_ids": [],
+                    },
+                    {
+                        "content": "Ungrounded conclusion",
+                        "source_ids": ["fabricated-id-that-does-not-exist"],
+                        "premises": ["Premise that was never observed"],
+                        "action": "create",
+                        "reason_for_entry": "Deduction offered from cited evidence",
+                        "search_query": "remote work",
+                        "searched_conclusion_ids": [],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+        assert "Failed 1" in result
+
+        stmt = select(models.Document).where(
+            models.Document.content.in_(
+                ["Grounded conclusion", "Ungrounded conclusion"]
+            )
+        )
+        docs = (await db_session.execute(stmt)).scalars().all()
+        assert len(docs) == 1
+        assert docs[0].content == "Grounded conclusion"
 
     async def test_empty_observations_list_returns_error(
         self, make_tool_context: Callable[..., ToolContext]
@@ -1065,6 +1352,94 @@ class TestGetObservationContext:
         )
 
         assert "Retrieved" in result or "No messages found" in result
+
+
+@pytest.mark.asyncio
+class TestGetReasoningChain:
+    """Tests for _handle_get_reasoning_chain."""
+
+    async def _create_tree(
+        self,
+        db_session: AsyncSession,
+        workspace: models.Workspace,
+        observer: models.Peer,
+        observed: models.Peer,
+    ) -> tuple[models.Document, models.Document]:
+        """Create a premise and a deductive conclusion derived from it."""
+        premise = models.Document(
+            workspace_name=workspace.name,
+            observer=observer.name,
+            observed=observed.name,
+            content="User works late at night",
+        )
+        db_session.add(premise)
+        await db_session.flush()
+
+        derived = models.Document(
+            workspace_name=workspace.name,
+            observer=observer.name,
+            observed=observed.name,
+            content="User is likely a night owl",
+            level="deductive",
+            source_ids=[premise.id],
+        )
+        db_session.add(derived)
+        # Commit so the handler's own tracked_db session can see the data.
+        await db_session.commit()
+        return premise, derived
+
+    async def test_traverses_derived_conclusions(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Walking upward from a premise finds the conclusions derived from it."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        premise, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": premise.id, "direction": "conclusions"}
+        )
+
+        assert f"[id:{derived.id}]" in result
+        assert "User is likely a night owl" in result
+
+    async def test_traverses_premises(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Walking downward from a derived conclusion finds its premises."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        premise, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": derived.id, "direction": "premises"}
+        )
+
+        assert f"[id:{premise.id}]" in result
+        assert "User works late at night" in result
+
+    async def test_leaf_has_no_derived_conclusions(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A conclusion nothing was derived from reports none found."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        _, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": derived.id, "direction": "conclusions"}
+        )
+
+        assert "None found" in result
 
 
 @pytest.mark.asyncio

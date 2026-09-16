@@ -634,6 +634,14 @@ class Conclusion(BaseModel):
         validation_alias="internal_metadata",
         description="Why this conclusion was retired; absent while it is live.",
     )
+    source_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "IDs of the conclusions this one was derived from: premises for "
+            "'deductive', supporting sources for 'inductive', conflicting "
+            "conclusions for 'contradiction'. None for 'explicit' conclusions."
+        ),
+    )
     times_derived: int = Field(
         default=1,
         description="Number of times this conclusion has been independently derived.",

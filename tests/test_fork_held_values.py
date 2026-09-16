@@ -417,3 +417,40 @@ def test_both_sdks_declare_the_same_version():
 
     assert python_sdk["project"]["version"] == typescript_sdk["version"]
     assert python_sdk["project"]["version"] == "2.4.0"
+
+
+def test_dreamer_prompts_keep_anti_fabrication_and_enrich():
+    source = (REPO_ROOT / "src/dreamer/specialists.py").read_text()
+    assert "delete outdated" not in source
+    assert "Use `enrich`; do not separately delete its target" in source
+    anti = (
+        "Copy source_ids exactly from the [id:xxx] shown in observation results"
+        " - `search_messages` results have no ID and cannot be cited; "
+        "invented IDs are discarded"
+    )
+    assert source.count(anti) == 2
+
+
+def test_source_grounding_holds_the_schema_minimum_for_inductive():
+    """Upstream grounds inductive on one source; ConclusionCreate refuses fewer than two,
+    so upstream's minimum hands the write path an observation it will reject wholesale."""
+    minimum = 'min_sources = 2 if obs.level in ("contradiction", "inductive") else 1'
+    assert minimum in Path(agent_tools.__file__).read_text()
+
+    with pytest.raises(ValidationError, match="inductive conclusions require"):
+        schemas.ConclusionCreate(
+            content="the user reads at night",
+            observer_id="observer",
+            observed_id="observed",
+            level="inductive",
+            action="create",
+            reason_for_entry="Distinct durable fact",
+            search_query="night",
+            searched_conclusion_ids=[],
+            source_ids=["a" * 21],
+            sources=["one", "two"],
+            pattern_type="behavior",
+            entry_origin="dreamer_agent",
+            agent_trace_id="test",
+            agent_model="test",
+        )

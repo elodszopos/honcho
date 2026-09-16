@@ -11,8 +11,14 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
-import { Honcho, Conclusion, ConclusionsView } from '../src'
+import {
+  Honcho,
+  Conclusion,
+  ConclusionsView,
+  WorkspaceConclusions,
+} from '../src'
 import type { ConclusionCreateParams } from '../src'
+import { NotFoundError } from '../src/http/errors'
 import { createTestClient, requireServer } from './setup'
 import { assertConclusionShape } from './helpers'
 
@@ -346,6 +352,158 @@ describe('Conclusions', () => {
   })
 
   // ===========================================================================
+  // Single Conclusion Retrieval
+  // ===========================================================================
+
+  describe('get', () => {
+    test('get returns conclusion with attribution fields', async () => {
+      const peer = await client.peer('get-conclusion-peer', { metadata: {} })
+      const session = await client.session('get-conclusion-session', { metadata: {} })
+
+      const [created] = await peer.conclusions.create(operatorConclusion('Conclusion to fetch', session))
+
+      const fetched = await peer.conclusions.get(created.id)
+
+      expect(fetched).toBeInstanceOf(Conclusion)
+      expect(fetched.id).toBe(created.id)
+      expect(fetched.content).toBe('Conclusion to fetch')
+      expect(fetched.observerId).toBe(peer.id)
+      expect(fetched.observedId).toBe(peer.id)
+      expect(fetched.level).toBe('explicit')
+      // User-created conclusions are explicit: no premises, derived once
+      expect(fetched.sourceIds).toBeNull()
+      expect(fetched.timesDerived).toBe(1)
+    })
+  })
+
+  // ===========================================================================
+  // Batch Retrieval (getMany)
+  // ===========================================================================
+
+  describe('getMany', () => {
+    test('fetches multiple conclusions by ID', async () => {
+      const peer = await client.peer('get-many-conclusion-peer', { metadata: {} })
+      const session = await client.session('get-many-conclusion-session', { metadata: {} })
+
+      const created = await peer.conclusions.create([
+        operatorConclusion('First batch conclusion', session),
+        operatorConclusion('Second batch conclusion', session),
+        operatorConclusion('Third batch conclusion', session),
+      ])
+
+      const fetched = await peer.conclusions.getMany(created.map((c) => c.id))
+
+      expect(fetched.length).toBe(3)
+      for (const conclusion of fetched) {
+        expect(conclusion).toBeInstanceOf(Conclusion)
+      }
+      expect(new Set(fetched.map((c) => c.id))).toEqual(
+        new Set(created.map((c) => c.id))
+      )
+    })
+
+    test('empty input returns empty array', async () => {
+      const peer = await client.peer('get-many-empty-peer', { metadata: {} })
+
+      const fetched = await peer.conclusions.getMany([])
+
+      expect(fetched).toEqual([])
+    })
+  })
+
+  // ===========================================================================
+  // Derived Conclusions (list + source_ids contains)
+  // ===========================================================================
+
+  describe('honcho.conclusions (workspace-wide)', () => {
+    test('lists and fetches across observer/observed pairs', async () => {
+      const alice = await client.peer('ws-conc-alice', { metadata: {} })
+      const bob = await client.peer('ws-conc-bob', { metadata: {} })
+      const session = await client.session('ws-conc-session', { metadata: {} })
+
+      const [aliceSelf] = await alice.conclusions.create(operatorConclusion('Alice self conclusion', session))
+      const [aboutBob] = await alice.conclusionsOf(bob).create(operatorConclusion('Alice about Bob', session))
+
+      expect(client.conclusions).toBeInstanceOf(WorkspaceConclusions)
+
+      const page = await client.conclusions.list({ size: 100 })
+      const ids = new Set(page.items.map((c) => c.id))
+      expect(ids.has(aliceSelf.id)).toBe(true)
+      expect(ids.has(aboutBob.id)).toBe(true)
+
+      const aboutBobOnly = await client.conclusions.list({
+        filters: { observed_id: bob.id },
+        size: 100,
+      })
+      expect(aboutBobOnly.items.every((c) => c.observedId === bob.id)).toBe(true)
+      expect(new Set(aboutBobOnly.items.map((c) => c.id)).has(aboutBob.id)).toBe(
+        true
+      )
+
+      const sessionPage = await client.conclusions.list({
+        filters: { session_id: session.id },
+        size: 100,
+      })
+      const sessionIds = new Set(sessionPage.items.map((c) => c.id))
+      expect(sessionIds.has(aliceSelf.id)).toBe(true)
+      expect(sessionIds.has(aboutBob.id)).toBe(true)
+
+      const fetched = await client.conclusions.get(aboutBob.id)
+      expect(fetched.id).toBe(aboutBob.id)
+      expect(fetched.observerId).toBe(alice.id)
+      expect(fetched.observedId).toBe(bob.id)
+
+      const batch = await client.conclusions.getMany([aliceSelf.id, aboutBob.id])
+      expect(new Set(batch.map((c) => c.id))).toEqual(
+        new Set([aliceSelf.id, aboutBob.id])
+      )
+
+      await expect(alice.conclusions.get(aboutBob.id)).rejects.toBeInstanceOf(
+        NotFoundError
+      )
+    })
+  })
+
+  describe('derived() via source_ids contains', () => {
+    test('leaf conclusion has no derived conclusions', async () => {
+      const peer = await client.peer('derived-conclusion-peer', { metadata: {} })
+      const session = await client.session('derived-conclusion-session', { metadata: {} })
+
+      // User-created (explicit) conclusions have nothing derived from them
+      const [created] = await peer.conclusions.create(operatorConclusion('Leaf conclusion', session))
+
+      const page = await peer.conclusions.derived(created.id)
+
+      expect(page.items).toEqual([])
+      expect(page.total).toBe(0)
+    })
+
+    test('derived() returns children that cite the source', async () => {
+      const peer = await client.peer('derived-child-conclusion-peer', {
+        metadata: {},
+      })
+      const session = await client.session('derived-child-conclusion-session', {
+        metadata: {},
+      })
+
+      const [leaf] = await peer.conclusions.create(
+        operatorConclusion('Leaf conclusion', session)
+      )
+      const [child] = await peer.conclusions.create({
+        ...operatorConclusion('Child derived from leaf', session),
+        level: 'deductive',
+        sourceIds: [leaf.id],
+        premises: ['Leaf conclusion'],
+        entryOrigin: 'dreamer_agent',
+      })
+
+      const page = await peer.conclusions.derived(leaf.id)
+
+      expect(page.items.map((c) => c.id)).toEqual([child.id])
+    })
+  })
+
+  // ===========================================================================
   // Conclusion Deletion (DELETE /conclusions/:id)
   // ===========================================================================
 
@@ -484,7 +642,27 @@ describe('Conclusions', () => {
       expect(conclusion.createdAt).toBe('2024-01-15T10:00:00Z')
     })
 
-    test('fromApiResponse defaults timesDerived when the server omits it', () => {
+    test('fromApiResponse carries attribution fields', () => {
+      const response = {
+        id: 'derived-id',
+        content: 'Derived conclusion',
+        observer_id: 'observer',
+        observed_id: 'observed',
+        session_id: null,
+        level: 'deductive' as const,
+        source_ids: ['premise-1', 'premise-2'],
+        times_derived: 3,
+        created_at: '2024-01-15T10:00:00Z',
+      }
+
+      const conclusion = Conclusion.fromApiResponse(response)
+
+      expect(conclusion.level).toBe('deductive')
+      expect(conclusion.sourceIds).toEqual(['premise-1', 'premise-2'])
+      expect(conclusion.timesDerived).toBe(3)
+    })
+
+    test('fromApiResponse defaults attribution when the server omits it', () => {
       const conclusion = Conclusion.fromApiResponse({
         id: 'test-id',
         content: 'Test content',
@@ -495,6 +673,7 @@ describe('Conclusions', () => {
       })
 
       expect(conclusion.timesDerived).toBe(1)
+      expect(conclusion.sourceIds).toBeNull()
     })
 
     test('toString returns readable format', async () => {

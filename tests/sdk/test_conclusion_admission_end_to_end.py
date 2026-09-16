@@ -178,6 +178,11 @@ async def test_public_sdk_search_create_enrich_levels_and_history(
 
     assert [row.level for row in dreamed] == ["deductive", "inductive"]
     assert dreamed[0].admission["source_ids"] == [enriched[0].id]
+    if client_type == "async":
+        derived_lineage = await scope.aio.lineage(dreamed[0].id)
+    else:
+        derived_lineage = scope.lineage(dreamed[0].id)
+    assert derived_lineage.source_ids == [enriched[0].id]
     assert dreamed[1].admission["pattern_type"] == "tendency"
     assert dreamed[1].admission["confidence"] == "high"
     assert operator[0].admission["entry_origin"] == "operator_sdk"

@@ -359,6 +359,7 @@ export interface ConclusionResponse {
   level: ConclusionLevel
   admission: Record<string, unknown>
   removal: Record<string, unknown> | null
+  source_ids?: string[] | null
   times_derived?: number
   created_at: string
   deleted_at: string | null

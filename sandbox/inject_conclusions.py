@@ -133,6 +133,12 @@ def check_signatures(crud: Any, schemas: Any) -> None:
                 "stability contract; bump sandbox/image.env and update this script together."
             )
 
+    if "db" in inspect.signature(crud.get_child_observations).parameters:
+        raise InjectError(
+            "crud.get_child_observations is a query builder and must not take db. "
+            "Call db.execute(crud.get_child_observations(...))."
+        )
+
     for model, fields in (
         (
             schemas.DocumentCreate,
@@ -472,13 +478,15 @@ async def verify_links(
     async with internals.tracked_db("sandbox.verify_links") as db:
         declared: set[str] = set()
         for premise_id in cited:
-            children = await crud.get_child_observations(
-                db,
-                workspace,
-                premise_id,
-                observer=plan.observer,
-                observed=plan.observed,
+            result = await db.execute(
+                crud.get_child_observations(
+                    workspace,
+                    premise_id,
+                    observer=plan.observer,
+                    observed=plan.observed,
+                )
             )
+            children = result.scalars().all()
             if not children:
                 raise InjectError(
                     f"{plan}: premise {premise_id} has no reachable children, so the "

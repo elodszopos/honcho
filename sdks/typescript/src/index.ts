@@ -15,6 +15,7 @@ export {
   ConclusionsView as ConclusionScope,
   ConclusionsView,
   MAX_CONCLUSION_CHARS,
+  WorkspaceConclusions,
 } from './conclusions'
 // HTTP infrastructure
 export {

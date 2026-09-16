@@ -7,7 +7,9 @@ from sdks.python.src.honcho.conclusions import (
     Conclusion,
     ConclusionCreateParams,
     ConclusionsView,
+    WorkspaceConclusions,
 )
+from sdks.python.src.honcho.http import NotFoundError
 
 
 def _operator_conclusion(
@@ -384,6 +386,11 @@ async def test_observation_create_then_delete(
         retired_row = next(obs for obs in retired.items if obs.id == observation_id)
         assert retired_row.removal["category"] == "misderived"
         assert retired_row.deleted_at is not None
+
+        workspace_retired = await honcho_client.aio.conclusions.list(
+            include_deleted=True
+        )
+        assert any(obs.id == observation_id for obs in workspace_retired.items)
     else:
         observer = honcho_client.peer(id="test-obs-create-delete-observer")
         target = honcho_client.peer(id="test-obs-create-delete-target")
@@ -429,6 +436,273 @@ async def test_observation_create_then_delete(
         )
         assert retired_row.removal["category"] == "misderived"
         assert retired_row.deleted_at is not None
+
+        workspace_retired = honcho_client.conclusions.list(include_deleted=True)
+        assert any(obs.id == observation_id for obs in workspace_retired)
+
+
+@pytest.mark.asyncio
+async def test_observation_get_by_id(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests fetching a single conclusion by ID, including attribution fields.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-get-by-id-observer")
+        target = await honcho_client.aio.peer(id="test-obs-get-by-id-target")
+        session = await honcho_client.aio.session(id="test-obs-get-by-id-session")
+
+        # Ensure session and both peers exist
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = await obs_scope.aio.create(
+            [_operator_conclusion("Conclusion to fetch", session.id)]
+        )
+
+        fetched = await obs_scope.aio.get(created[0].id)
+
+        assert isinstance(fetched, Conclusion)
+        assert fetched.id == created[0].id
+        assert fetched.content == "Conclusion to fetch"
+        assert fetched.observer_id == observer.id
+        assert fetched.observed_id == target.id
+        assert fetched.level == "explicit"
+        # User-created conclusions are explicit: no premises, derived once
+        assert fetched.source_ids is None
+        assert fetched.times_derived == 1
+    else:
+        observer = honcho_client.peer(id="test-obs-get-by-id-observer")
+        target = honcho_client.peer(id="test-obs-get-by-id-target")
+        session = honcho_client.session(id="test-obs-get-by-id-session")
+
+        # Ensure session and both peers exist
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = obs_scope.create(
+            [_operator_conclusion("Conclusion to fetch", session.id)]
+        )
+
+        fetched = obs_scope.get(created[0].id)
+
+        assert isinstance(fetched, Conclusion)
+        assert fetched.id == created[0].id
+        assert fetched.content == "Conclusion to fetch"
+        assert fetched.observer_id == observer.id
+        assert fetched.observed_id == target.id
+        assert fetched.level == "explicit"
+        # User-created conclusions are explicit: no premises, derived once
+        assert fetched.source_ids is None
+        assert fetched.times_derived == 1
+
+
+@pytest.mark.asyncio
+async def test_observation_get_many(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests batch-fetching conclusions by ID (the tree-walk helper for source_ids).
+    """
+    honcho_client, client_type = client_fixture
+
+    contents = [
+        {"content": "First batch conclusion"},
+        {"content": "Second batch conclusion"},
+        {"content": "Third batch conclusion"},
+    ]
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-get-many-observer")
+        target = await honcho_client.aio.peer(id="test-obs-get-many-target")
+        session = await honcho_client.aio.session(id="test-obs-get-many-session")
+
+        # Ensure session and both peers exist
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = await obs_scope.aio.create(
+            [_operator_conclusion(c["content"], session.id) for c in contents]
+        )
+
+        assert await obs_scope.aio.get_many([]) == []
+
+        fetched = await obs_scope.aio.get_many([c.id for c in created])
+    else:
+        observer = honcho_client.peer(id="test-obs-get-many-observer")
+        target = honcho_client.peer(id="test-obs-get-many-target")
+        session = honcho_client.session(id="test-obs-get-many-session")
+
+        # Ensure session and both peers exist
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = obs_scope.create(
+            [_operator_conclusion(c["content"], session.id) for c in contents]
+        )
+
+        assert obs_scope.get_many([]) == []
+
+        fetched = obs_scope.get_many([c.id for c in created])
+
+    assert all(isinstance(c, Conclusion) for c in fetched)
+    assert {c.id for c in fetched} == {c.id for c in created}
+    assert {c.content for c in fetched} == {c["content"] for c in contents}
+
+
+@pytest.mark.asyncio
+async def test_observation_derived_empty_for_leaf(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests the derived() traversal: a user-created (explicit) conclusion has
+    nothing derived from it, so the endpoint returns an empty page.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-derived-observer")
+        target = await honcho_client.aio.peer(id="test-obs-derived-target")
+        session = await honcho_client.aio.session(id="test-obs-derived-session")
+
+        # Ensure session and both peers exist
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = await obs_scope.aio.create(
+            [_operator_conclusion("Leaf conclusion", session.id)]
+        )
+
+        page = await obs_scope.aio.derived(created[0].id)
+        items = page.items
+    else:
+        observer = honcho_client.peer(id="test-obs-derived-observer")
+        target = honcho_client.peer(id="test-obs-derived-target")
+        session = honcho_client.session(id="test-obs-derived-session")
+
+        # Ensure session and both peers exist
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = obs_scope.create(
+            [_operator_conclusion("Leaf conclusion", session.id)]
+        )
+
+        page = obs_scope.derived(created[0].id)
+        items = page.items
+
+    assert items == []
+
+
+@pytest.mark.asyncio
+async def test_observation_derived_returns_children(
+    client_fixture: tuple[Honcho, str],
+):
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-derived-child-observer")
+        target = await honcho_client.aio.peer(id="test-obs-derived-child-target")
+        session = await honcho_client.aio.session(id="test-obs-derived-child-session")
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+        obs_scope = observer.conclusions_of(target)
+        leaf = await obs_scope.aio.create(
+            [_operator_conclusion("Leaf for derived walk", session.id)]
+        )
+        child = await obs_scope.aio.create(
+            [
+                ConclusionCreateParams(
+                    content="Child derived from leaf",
+                    session_id=session.id,
+                    level="deductive",
+                    action="create",
+                    reason_for_entry="Deduction resting on the leaf",
+                    search_query="derived walk",
+                    searched_conclusion_ids=[],
+                    source_ids=[leaf[0].id],
+                    premises=["Leaf for derived walk"],
+                    entry_origin="dreamer_agent",
+                    agent_trace_id="sdk-test-derived-trace",
+                    agent_model="sdk-test-model",
+                )
+            ]
+        )
+        page = await obs_scope.aio.derived(leaf[0].id)
+        items = page.items
+    else:
+        observer = honcho_client.peer(id="test-obs-derived-child-observer")
+        target = honcho_client.peer(id="test-obs-derived-child-target")
+        session = honcho_client.session(id="test-obs-derived-child-session")
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+        obs_scope = observer.conclusions_of(target)
+        leaf = obs_scope.create(
+            [_operator_conclusion("Leaf for derived walk", session.id)]
+        )
+        child = obs_scope.create(
+            [
+                ConclusionCreateParams(
+                    content="Child derived from leaf",
+                    session_id=session.id,
+                    level="deductive",
+                    action="create",
+                    reason_for_entry="Deduction resting on the leaf",
+                    search_query="derived walk",
+                    searched_conclusion_ids=[],
+                    source_ids=[leaf[0].id],
+                    premises=["Leaf for derived walk"],
+                    entry_origin="dreamer_agent",
+                    agent_trace_id="sdk-test-derived-trace",
+                    agent_model="sdk-test-model",
+                )
+            ]
+        )
+        page = obs_scope.derived(leaf[0].id)
+        items = page.items
+
+    assert {item.id for item in items} == {child[0].id}
 
 
 @pytest.mark.asyncio
@@ -858,3 +1132,103 @@ async def test_query_rejects_reserved_scope_filter_keys(
             with pytest.raises(ValueError, match="managed by this conclusions view"):
                 obs_scope.query("q", filters={key: "someone-else"})
         obs_scope.query("q", filters={"session_id": "some-session"})
+
+
+@pytest.mark.asyncio
+async def test_workspace_conclusions_list_and_get(
+    client_fixture: tuple[Honcho, str],
+):
+    """honcho.conclusions lists and fetches across observer/observed pairs."""
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        alice = await honcho_client.aio.peer(id="test-ws-conc-alice")
+        bob = await honcho_client.aio.peer(id="test-ws-conc-bob")
+        session = await honcho_client.aio.session(id="test-ws-conc-session")
+        await session.aio.add_messages(
+            [alice.message("hi from alice"), bob.message("hi from bob")]
+        )
+        alice_conc = (
+            await alice.conclusions.aio.create(
+                [_operator_conclusion("Alice self conclusion", session.id)]
+            )
+        )[0]
+        about_bob = (
+            await alice.conclusions_of(bob).aio.create(
+                [_operator_conclusion("Alice about Bob", session.id)]
+            )
+        )[0]
+
+        assert isinstance(honcho_client.conclusions, WorkspaceConclusions)
+
+        page = await honcho_client.aio.conclusions.list(size=100)
+        ids = {c.id for c in page.items}
+        assert alice_conc.id in ids
+        assert about_bob.id in ids
+
+        about_bob_only = await honcho_client.aio.conclusions.list(
+            filters={"observed_id": bob.id}, size=100
+        )
+        assert {c.id for c in about_bob_only.items} >= {about_bob.id}
+        assert all(c.observed_id == bob.id for c in about_bob_only.items)
+
+        session_page = await honcho_client.aio.conclusions.list(
+            filters={"session_id": session.id}, size=100
+        )
+        assert {c.id for c in session_page.items} >= {alice_conc.id, about_bob.id}
+
+        fetched = await honcho_client.aio.conclusions.get(about_bob.id)
+        assert fetched.id == about_bob.id
+        assert fetched.observer_id == alice.id
+        assert fetched.observed_id == bob.id
+
+        batch = await honcho_client.aio.conclusions.get_many(
+            [alice_conc.id, about_bob.id]
+        )
+        assert {c.id for c in batch} == {alice_conc.id, about_bob.id}
+
+        # Scoped get cannot see a conclusion from a different pair.
+        with pytest.raises(NotFoundError):
+            await alice.conclusions.aio.get(about_bob.id)
+    else:
+        alice = honcho_client.peer(id="test-ws-conc-alice")
+        bob = honcho_client.peer(id="test-ws-conc-bob")
+        session = honcho_client.session(id="test-ws-conc-session")
+        session.add_messages(
+            [alice.message("hi from alice"), bob.message("hi from bob")]
+        )
+        alice_conc = alice.conclusions.create(
+            [_operator_conclusion("Alice self conclusion", session.id)]
+        )[0]
+        about_bob = alice.conclusions_of(bob).create(
+            [_operator_conclusion("Alice about Bob", session.id)]
+        )[0]
+
+        assert isinstance(honcho_client.conclusions, WorkspaceConclusions)
+
+        page = honcho_client.conclusions.list(size=100)
+        ids = {c.id for c in page.items}
+        assert alice_conc.id in ids
+        assert about_bob.id in ids
+
+        about_bob_only = honcho_client.conclusions.list(
+            filters={"observed_id": bob.id}, size=100
+        )
+        assert {c.id for c in about_bob_only.items} >= {about_bob.id}
+        assert all(c.observed_id == bob.id for c in about_bob_only.items)
+
+        session_page = honcho_client.conclusions.list(
+            filters={"session_id": session.id}, size=100
+        )
+        assert {c.id for c in session_page.items} >= {alice_conc.id, about_bob.id}
+
+        fetched = honcho_client.conclusions.get(about_bob.id)
+        assert fetched.id == about_bob.id
+        assert fetched.observer_id == alice.id
+        assert fetched.observed_id == bob.id
+
+        batch = honcho_client.conclusions.get_many([alice_conc.id, about_bob.id])
+        assert {c.id for c in batch} == {alice_conc.id, about_bob.id}
+
+        with pytest.raises(NotFoundError):
+            alice.conclusions.get(about_bob.id)

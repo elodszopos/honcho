@@ -461,6 +461,7 @@ class ConclusionResponse(BaseModel):
     level: ConclusionLevel = "explicit"
     admission: dict[str, Any] = Field(default_factory=dict)
     removal: dict[str, Any] | None = None
+    source_ids: list[str] | None = None
     times_derived: int = 1
     created_at: datetime.datetime
     deleted_at: datetime.datetime | None = None
