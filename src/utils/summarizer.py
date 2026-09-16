@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from enum import Enum
 from functools import cache
 from inspect import cleandoc as c
@@ -198,7 +199,7 @@ async def create_short_summary(
     input_tokens: int,
     previous_summary: str | None = None,
     *,
-    workspace_name: str | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
     # input_tokens indicates how many tokens the message list + previous summary take up
     # we want to optimize short summaries to be smaller than the actual content being summarized
@@ -217,16 +218,16 @@ async def create_short_summary(
     )
 
     # Mint a root span id.
-    # No session_id or run_id for tracing
     trace_id = generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
-        telemetry=LLMTelemetryContext(
-            workspace_name=workspace_name,
+        telemetry=replace(
+            telemetry or LLMTelemetryContext(),
             call_purpose=CallPurpose.SUMMARY_SHORT.value,
             parent_category="summary",
+            agent_type="summarizer",
             trace_id=trace_id,
             span_id=trace_id,
             track_name="Short Summary",
@@ -239,7 +240,7 @@ async def create_long_summary(
     formatted_messages: str,
     previous_summary: str | None = None,
     *,
-    workspace_name: str | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]:
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
@@ -255,16 +256,16 @@ async def create_long_summary(
     )
 
     # Mint a root span id.
-    # No session_id or run_id for tracing
     trace_id = generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
-        telemetry=LLMTelemetryContext(
-            workspace_name=workspace_name,
+        telemetry=replace(
+            telemetry or LLMTelemetryContext(),
             call_purpose=CallPurpose.SUMMARY_LONG.value,
             parent_category="summary",
+            agent_type="summarizer",
             trace_id=trace_id,
             span_id=trace_id,
             track_name="Long Summary",
@@ -279,6 +280,8 @@ async def summarize_if_needed(
     message_seq_in_session: int,
     message_public_id: str,
     configuration: schemas.ResolvedConfiguration,
+    *,
+    queue_item_id: int | None = None,
 ) -> None:
     """
     Create short/long summaries if thresholds met.
@@ -293,6 +296,7 @@ async def summarize_if_needed(
         message_seq_in_session: The sequence number of the message in the session
         message_public_id: The public ID of the message
         configuration: The resolved configuration for the message
+        queue_item_id: Queue row that triggered this summary, when available.
     """
     if configuration.summary.enabled is False:
         return
@@ -319,6 +323,7 @@ async def summarize_if_needed(
                 message_public_id=message_public_id,
                 summary_type=SummaryType.LONG,
                 configuration=configuration,
+                queue_item_id=queue_item_id,
             )
             accumulate_metric(
                 f"summary_{workspace_name}_{message_id}",
@@ -336,6 +341,7 @@ async def summarize_if_needed(
                 message_public_id=message_public_id,
                 summary_type=SummaryType.SHORT,
                 configuration=configuration,
+                queue_item_id=queue_item_id,
             )
             accumulate_metric(
                 f"summary_{workspace_name}_{message_id}",
@@ -360,6 +366,7 @@ async def summarize_if_needed(
                 message_public_id=message_public_id,
                 summary_type=SummaryType.LONG,
                 configuration=configuration,
+                queue_item_id=queue_item_id,
             )
             accumulate_metric(
                 f"summary_{workspace_name}_{message_id}",
@@ -376,6 +383,7 @@ async def summarize_if_needed(
                 message_public_id=message_public_id,
                 summary_type=SummaryType.SHORT,
                 configuration=configuration,
+                queue_item_id=queue_item_id,
             )
             accumulate_metric(
                 f"summary_{workspace_name}_{message_id}",
@@ -394,6 +402,7 @@ async def _create_and_save_summary(
     message_public_id: str,
     summary_type: SummaryType,
     configuration: schemas.ResolvedConfiguration,
+    queue_item_id: int | None = None,
 ) -> None:
     """
     Create a new summary and save it to the database.
@@ -407,9 +416,13 @@ async def _create_and_save_summary(
     summary_start = time.perf_counter()
 
     async with tracked_db("summary.fetch_data") as db:
-        latest_summary = await get_summary(
-            db, workspace_name, session_name, summary_type
-        )
+        try:
+            session = await crud.get_session(db, session_name, workspace_name)
+        except ResourceNotFoundException:
+            return
+        session_id = session.id
+        summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
+        latest_summary = summaries.get(summary_type.value)
         if latest_summary:
             latest_summary_message_id = latest_summary["message_id"]
             # Skip if latest summary already covers message.
@@ -443,6 +456,7 @@ async def _create_and_save_summary(
         last_message_id = messages[-1].id
         last_message_content_preview = messages[-1].content[:30]
         message_count = len(messages)
+        source_message_ids = [message.public_id for message in messages]
 
         messages_tokens = sum([message.token_count for message in messages])
         previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
@@ -462,7 +476,12 @@ async def _create_and_save_summary(
         last_message_id=last_message_id,
         last_message_content_preview=last_message_content_preview,
         message_count=message_count,
-        workspace_name=workspace_name,
+        telemetry=LLMTelemetryContext(
+            workspace_name=workspace_name,
+            session_id=session_id,
+            source_message_ids=source_message_ids,
+            queue_item_ids=[queue_item_id] if queue_item_id is not None else [],
+        ),
     )
 
     # Compute scaffold tokens up front (cheap + idempotent) so both the
@@ -558,7 +577,7 @@ async def _create_summary(
     last_message_content_preview: str,
     message_count: int,
     *,
-    workspace_name: str | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> tuple[Summary, bool, int, int]:
     """
     Generate a summary of the provided messages using an LLM.
@@ -572,6 +591,7 @@ async def _create_summary(
         last_message_id: ID of the last message
         last_message_content_preview: Preview of last message content for fallback
         message_count: Number of messages for fallback
+        telemetry: Source identity carried through summary generation.
 
     Returns:
         A tuple of (Summary, is_fallback, llm_input_tokens, llm_output_tokens)
@@ -590,13 +610,13 @@ async def _create_summary(
                 formatted_messages,
                 input_tokens,
                 previous_summary_text,
-                workspace_name=workspace_name,
+                telemetry=telemetry,
             )
         else:
             response = await create_long_summary(
                 formatted_messages,
                 previous_summary_text,
-                workspace_name=workspace_name,
+                telemetry=telemetry,
             )
 
         summary_text = response.content

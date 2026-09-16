@@ -1,6 +1,7 @@
 """Values this fork holds. Upstream rewrites its own tests on every pull, so a merge that
 adopts upstream's value goes green unless the literal is asserted here."""
 
+import ast
 import datetime
 import json
 import re
@@ -18,6 +19,7 @@ from src.crud import representation as crud_representation
 from src.deriver import queue_manager
 from src.deriver.prompts import minimal_deriver_prompt
 from src.dreamer import dream_scheduler, surprisal
+from src.llm import api as llm_api
 from src.llm import registry as llm_registry
 from src.llm.api import is_transient_llm_error
 from src.reconciler import sync_vectors
@@ -56,6 +58,40 @@ def test_deriver_work_unit_timeout_is_held_and_read():
     assert "settings.DERIVER.WORK_UNIT_TIMEOUT_SECONDS" in source
 
 
+def test_deriver_work_units_actually_run_under_that_timeout():
+    """Reading the setting is not the held value; wrapping the work in it is."""
+    tree = ast.parse(Path(queue_manager.__file__).read_text())
+    wrapped: set[str] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "wait_for"
+            and node.args
+        ):
+            continue
+        inner = node.args[0]
+        if isinstance(inner, ast.Call):
+            target = inner.func
+            name = (
+                target.attr
+                if isinstance(target, ast.Attribute)
+                else getattr(target, "id", None)
+            )
+            if name:
+                wrapped.add(name)
+
+    assert {"process_representation_batch", "process_item"} <= wrapped, (
+        f"work-unit timeout no longer wraps the work; wait_for covers {sorted(wrapped)}"
+    )
+
+
+def test_unbounded_task_types_keep_the_multiplied_bound():
+    representation = queue_manager._work_unit_timeout("representation")
+    for task_type in ("dream", "deletion", "scope_backfill", "scope_removal"):
+        assert queue_manager._work_unit_timeout(task_type) == representation * 6
+
+
 def test_dedup_distance_is_a_setting_and_not_a_literal():
     assert _deriver_default("DEDUPLICATE_MAX_DISTANCE") == 0.05
 
@@ -81,6 +117,29 @@ def test_quota_rejection_is_never_retried():
     assert is_transient_llm_error(_http_error(429, "usage_limit_reached")) is False
     assert is_transient_llm_error(_http_error(429, "rate limit exceeded")) is True
     assert is_transient_llm_error(_http_error(503, "upstream unavailable")) is True
+
+
+def test_every_llm_retry_site_screens_quota_rejections():
+    """The predicate only holds the line at sites that are told to consult it."""
+    tree = ast.parse(Path(llm_api.__file__).read_text())
+    sites = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "retry"
+    ]
+    assert sites
+
+    for site in sites:
+        assert any(
+            keyword.arg == "retry"
+            and "is_transient_llm_error" in ast.unparse(keyword.value)
+            for keyword in site.keywords
+        ), (
+            f"retry() at {Path(llm_api.__file__).name}:{site.lineno} retries every "
+            "exception, so a quota 429 is re-spent instead of surfacing"
+        )
 
 
 def test_openai_clients_carry_no_retry_layer_of_their_own():
@@ -357,4 +416,4 @@ def test_both_sdks_declare_the_same_version():
     )
 
     assert python_sdk["project"]["version"] == typescript_sdk["version"]
-    assert python_sdk["project"]["version"] == "2.3.1"
+    assert python_sdk["project"]["version"] == "2.4.0"

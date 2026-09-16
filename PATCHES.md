@@ -23,19 +23,20 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `be543555` — upstream's tip; the backlog is closed |
-| Last upstream merge | `8e386180`, 2026-09-12 |
-| Carried surface | 74 files, +4,601 / -1,835 against `8e386180`, measured after the commit that records it |
-| Collides with upstream | `src/reconciler/sync_vectors.py`, `src/deriver/queue_manager.py`, `mcp/package.json`; the next pull's manifest comes from the gap report |
-| Schema | unchanged; `migrations/` is byte-identical from the fork point through upstream's tip |
+| Fork point | `be543555` — last full catch-up; upstream's tip is `e5bbebdf`, two attribution commits ahead |
+| Last upstream merge | `09421ddd`, 2026-09-16 |
+| Carried surface | 74 files, +4,574 / -1,866 against `09421ddd`, measured after the commit that records it; 17 further files are fork-only additions |
+| Collides with upstream | the deferred attribution pull (`09421ddd..e5bbebdf`) lands on 21 carried files: `src/crud/document.py`, `src/utils/{agent_tools,representation}.py`, `src/schemas/{api,internal}.py`, `src/routers/conclusions.py`, `src/deriver/{consumer,scope_backfill}.py`, `src/dreamer/specialists.py`, the Python SDK `{__init__,aio,api_types,conclusions}`, the TS SDK `{conclusions,index,types/api}`, and five of their test files |
+| Schema | unchanged vs `09421ddd`; the deferred `e5bbebdf` adds `a7c3e9f1b2d4_add_document_sources_table.py`, so this is no longer true through upstream's tip |
 
 ## Deliberately not carried
 
 - `create_documents` as a write path. The deriver, the conclusion route and the agent tools
   all admit through `create_observations`. Upstream's version decides create, merge and
   discard from a cosine threshold with no recorded reason, which the admission contract
-  exists to prevent. Its exact-content reinforcement went with it and is not restored: the
-  live pool holds zero exact-content collisions, even ignoring the session key.
+  exists to prevent. Its exact-content reinforcement went with it and is not restored; that
+  call was made against a pool that held no exact-content collisions at the time, which is a
+  data observation and not a property the tree can assert, so re-check it before relying on it.
 - The soft-delete reapers. `_cleanup_soft_deleted_documents_pgvector` and its reconciler batch
   are dropped outright, and `cleanup_soft_deleted_documents` drops the external vector but keeps
   the row, marking it `sync_state='purged'` so the eligibility query does not re-select it. A
@@ -68,7 +69,7 @@ overrides say nothing about what a merge would revert. The assertion lives in
 | `DERIVER.DEDUPLICATE_MAX_DISTANCE` | 0.05, configurable — inert, see caveats | 0.05, a module constant |
 | `DERIVER.MAX_OBSERVATIONS_PER_SESSION` | 0, off | key does not exist |
 | `MAX_CONCLUSION_CHARS` / `CONCLUSION_TARGET_CHARS` | 800 / 500, declared in `src/writing_contract.py` and asserted in `tests/test_llm_writing_contract.py` | 65535, storage ceiling only |
-| SDK version | 2.3.1, the version Hermes pins | upstream's own release cadence |
+| SDK version | 2.4.0, the version Hermes pins | upstream's own release cadence |
 
 ## Non-obvious adaptations
 
@@ -84,8 +85,12 @@ overrides say nothing about what a merge would revert. The assertion lives in
   categories that carry `entry_origin: system` and refuse agent attribution rather than
   fabricate it. A held-value test scans `src/` and fails on any other writer.
 - Retired rows are permanent and keep their vector. Retention is what the removal record is
-  for, so nothing reaps; `include_deleted` exists only on the conclusion list builder and never
-  on a query an agent reaches. Every `select(models.Document)` site is inventoried in the
+  for, so nothing reaps; `include_deleted` exists only on the conclusion list builder, and never
+  on the deriver, dialectic or dreamer search paths — the held-value test binds exactly that, by
+  scanning `agent_tools` and `crud.representation`. It is deliberately opt-in and default-false
+  on the list surface above that builder: the conclusions route, both SDKs, and the MCP tool,
+  which is agent-facing by design so a retired row can be read back with its removal reason.
+  Every `select(models.Document)` site is inventoried in the
   held-value tests, so a new one fails the suite until it gets a verdict on retired rows.
 - Reinforcement follows the memory. Enrichment writes `max(previous.times_derived + 1,
   supplied)` with the whole batch's predecessors locked in one id-ordered statement — per-target
@@ -154,10 +159,11 @@ overrides say nothing about what a merge would revert. The assertion lives in
   typecheck reads `dist/`, so the SDK must be built first.
 - `src/routers/messages.py` widens upstream's enqueue payload with the message metadata, which
   is how `is_seeded_memory_message` sees a local-memory seed block.
-- Python 3.13 everywhere: `.python-version`, `requires-python` and the project environment
-  all match the `python:3.13-slim` containers and the agent's own interpreter, adopted
-  ahead of the merge rather than during it. The suite passes on 3.13 unchanged, so
-  upstream's own move to that floor is already reconciled and needs no verdict.
+- Python 3.13 for the server: `.python-version`, the root `requires-python` and the project
+  environment all match the `python:3.13-slim` containers and the agent's own interpreter,
+  adopted ahead of the merge rather than during it. The suite passes on 3.13 unchanged, so
+  upstream's own move to that floor is already reconciled and needs no verdict. `honcho-cli`
+  is the exception and stays at `>=3.11`, matching upstream; it is not a carried value.
 - `create_documents` and `is_rejected_duplicate` have no production caller; every write enters
   through `create_observations`. Their conflicts resolve toward upstream at no behavioural cost.
   `DERIVER.DEDUPLICATE_MAX_DISTANCE` is read at both sites beneath them — the candidate resolve

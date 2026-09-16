@@ -53,11 +53,16 @@ export {
 
 // API types (snake_case, for advanced usage)
 export type {
+  ChatResponse,
   ConclusionLevel,
   ConclusionLineageResponse,
   ConclusionQueryParams,
   ConclusionRemovalParams,
   ConclusionResponse,
+  Evidence,
+  EvidenceMessageRef,
+  EvidenceObservation,
+  EvidenceToolCall,
   RemovalCategory,
   MessageResponse,
   PageResponse,

@@ -111,6 +111,7 @@ async def test_admission_is_batched_and_persisted_once_with_candidate_source_ids
             observers=["bob"],
             observed="alice",
             queue_item_message_ids=[11, 13],
+            session_id="canonical-session-1",
         )
 
     assert llm_call.await_count == 2
@@ -118,6 +119,23 @@ async def test_admission_is_batched_and_persisted_once_with_candidate_source_ids
     assert (
         llm_call.await_args_list[1].kwargs["response_model"] is AdmissionRepresentation
     )
+
+    # Admission is a second LLM call the fork adds, so upstream's session-identity
+    # telemetry only reaches extraction unless it is carried here too.
+    extraction_telemetry = llm_call.await_args_list[0].kwargs["telemetry"]
+    admission_telemetry = llm_call.await_args_list[1].kwargs["telemetry"]
+    assert admission_telemetry.session_id == "canonical-session-1"
+    for field in (
+        "session_id",
+        "agent_type",
+        "observers",
+        "source_message_ids",
+        "queue_item_ids",
+    ):
+        assert getattr(admission_telemetry, field) == getattr(
+            extraction_telemetry, field
+        ), f"admission telemetry dropped {field}; its spend would not group with the session"
+
     admission_prompt = llm_call.await_args_list[1].kwargs["prompt"]
     assert "[message_id:11]" in admission_prompt
     assert "[message_id:12]" in admission_prompt
@@ -199,6 +217,7 @@ async def test_invalid_late_admission_fails_before_atomic_write() -> None:
             observers=["bob"],
             observed="alice",
             queue_item_message_ids=[21, 23],
+            session_id="canonical-session-1",
         )
 
     save.assert_not_awaited()

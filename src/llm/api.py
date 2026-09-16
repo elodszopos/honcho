@@ -358,6 +358,10 @@ async def honcho_llm_call(
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
+            # Surface the provider's own error once the budget is spent.
+            # Without this tenacity raises RetryError, which erases the cause
+            # and lands every outage on the generic 500 handler.
+            reraise=True,
         )(decorated)
 
     def _trace_thinking_budget() -> int | None:
@@ -468,9 +472,13 @@ async def honcho_llm_call(
                 wrapped = ai_track(sentry_track_name)(wrapped)
             if enable_retry:
                 wrapped = retry(
+                    retry=retry_if_exception(is_transient_llm_error),
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
                     before_sleep=before_retry_callback,
+                    # Same as above: the toolless path is what the deriver
+                    # uses, so an outage here must stay legible too.
+                    reraise=True,
                 )(wrapped)
             result: (
                 HonchoLLMCallResponse[Any]
