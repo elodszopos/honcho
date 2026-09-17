@@ -139,9 +139,11 @@ async def test_admission_is_batched_and_persisted_once_with_candidate_source_ids
         )
 
     admission_prompt = llm_call.await_args_list[1].kwargs["prompt"]
-    assert "[message_id:11]" in admission_prompt
-    assert "[message_id:12]" in admission_prompt
-    assert "[message_id:13]" in admission_prompt
+    # The admission pass cites source_message_ids, so every batch message carries its
+    # database id; upstream's idx is batch position and would not resolve.
+    assert 'message_id="11"' in admission_prompt
+    assert 'message_id="12"' in admission_prompt
+    assert 'message_id="13"' in admission_prompt
     assert '"admission_case_id": 0' in admission_prompt
     assert '"admission_case_id": 1' in admission_prompt
 

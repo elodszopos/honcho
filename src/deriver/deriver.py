@@ -26,7 +26,6 @@ from src.telemetry.prometheus.metrics import (
 )
 from src.telemetry.sentry import with_sentry_transaction
 from src.utils.config_helpers import get_configuration
-from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import (
     AdmissionRepresentation,
     ExplicitObservation,
@@ -36,7 +35,11 @@ from src.utils.representation import (
 from src.utils.retryable_errors import is_retryable_error
 from src.utils.tokens import track_deriver_input_tokens
 
-from .prompts import estimate_deriver_prompt_tokens, minimal_deriver_prompt
+from .prompts import (
+    estimate_deriver_prompt_tokens,
+    format_deriver_message,
+    minimal_deriver_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,11 +175,11 @@ async def process_representation_tasks_batch(
         "id",
     )
 
-    # Format messages with timestamps
     formatted_messages = "\n".join(
-        f"[message_id:{msg.id}]\n"
-        + format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
-        for msg in messages
+        format_deriver_message(
+            idx, msg.id, msg.peer_name, observed, msg.created_at, msg.content
+        )
+        for idx, msg in enumerate(messages)
     )
 
     # Track token usage - count only tokens from messages being processed

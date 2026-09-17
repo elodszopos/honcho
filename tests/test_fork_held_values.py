@@ -416,7 +416,7 @@ def test_both_sdks_declare_the_same_version():
     )
 
     assert python_sdk["project"]["version"] == typescript_sdk["version"]
-    assert python_sdk["project"]["version"] == "2.4.0"
+    assert python_sdk["project"]["version"] == "2.5.0"
 
 
 def test_dreamer_prompts_keep_anti_fabrication_and_enrich():

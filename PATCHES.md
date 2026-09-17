@@ -23,11 +23,11 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `e5bbebdf` — upstream's tip; the backlog is closed |
-| Last upstream merge | `e5bbebdf`, 2026-09-16 |
-| Carried surface | 77 files, +5,139 / -1,980 against `e5bbebdf`, measured after the commit that records it; 23 further files are fork-only additions |
+| Fork point | `36881ff8` — upstream's tip; the backlog is closed |
+| Last upstream merge | `36881ff8`, 2026-09-17 |
+| Carried surface | 77 files, +5,163 / -1,995 against `36881ff8`, measured after the commit that records it; 23 further files are fork-only additions |
 | Collides with upstream | the next pull's manifest comes from the gap report; nothing is outstanding |
-| Schema | unchanged; `migrations/` is byte-identical to `e5bbebdf`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
+| Schema | unchanged; `migrations/` is byte-identical to `36881ff8`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
 
 ## Deliberately not carried
 
@@ -74,7 +74,7 @@ overrides say nothing about what a merge would revert. The assertion lives in
 | `DERIVER.DEDUPLICATE_MAX_DISTANCE` | 0.05, configurable — inert, see caveats | 0.05, a module constant |
 | `DERIVER.MAX_OBSERVATIONS_PER_SESSION` | 0, off | key does not exist |
 | `MAX_CONCLUSION_CHARS` / `CONCLUSION_TARGET_CHARS` | 800 / 500, declared in `src/writing_contract.py` and asserted in `tests/test_llm_writing_contract.py` | 65535, storage ceiling only |
-| SDK version | 2.4.0, the version Hermes pins | upstream's own release cadence |
+| SDK version | 2.5.0, the version Hermes pins | upstream's own release cadence |
 | Grounded sources required of an inductive conclusion | 2, mirroring `ConclusionCreate` | 1 |
 
 ## Non-obvious adaptations
@@ -158,6 +158,9 @@ overrides say nothing about what a merge would revert. The assertion lives in
   retry policy.
 - `ExtractedRepresentation` and `AdmissionRepresentation` are the two response models; the
   structured-output repair path treats both as representation models.
+- Every batch message reaches the deriver inside upstream's `<message>` tag carrying one extra
+  attribute, `message_id`. The admission pass cites database ids in `source_message_ids`, and
+  upstream's `idx` is batch position, which resolves against nothing.
 - The deriver prompt is a four-criteria selective-extraction contract with an enumerated
   exclusion taxonomy, an outcome-over-process rule, and travel-scope exclusions. Zero
   extractions is the expected output for an ordinary turn. Custom instructions may narrow

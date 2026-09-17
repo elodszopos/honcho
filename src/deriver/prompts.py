@@ -5,11 +5,41 @@ This module contains simplified prompt templates focused only on observation ext
 NO peer card instructions, NO working representation - just extract observations.
 """
 
+import re
+from datetime import datetime
 from functools import cache
 from inspect import cleandoc as c
 
 from src.utils.tokens import estimate_tokens
 from src.writing_contract import CONCLUSION_WRITING_CONTRACT
+
+_MESSAGE_TAG = re.compile(r"<(?=/?message\b)", re.IGNORECASE)
+
+
+def format_deriver_message(
+    idx: int,
+    message_id: int,
+    peer: str,
+    target: str,
+    created_at: datetime,
+    content: str,
+) -> str:
+    """Wrap one batch message in a tag carrying its ids, author, and target flag.
+
+    ``message_id`` is the database id the admission pass cites in
+    ``source_message_ids``; ``idx`` is batch position only. Peer ids are
+    restricted to ``[a-zA-Z0-9_-]`` upstream, so only the content can carry
+    markup; any ``<message``/``</message`` inside it is neutralized so a message
+    cannot forge its own tag boundary.
+    """
+    is_target = "true" if peer == target else "false"
+    time_str = created_at.strftime("%Y-%m-%d %H:%M:%S")
+    safe_content = _MESSAGE_TAG.sub("&lt;", content)
+    return (
+        f'<message idx="{idx}" message_id="{message_id}" peer="{peer}" '
+        f'target="{is_target}" time="{time_str}">'
+        f"{safe_content}</message>"
+    )
 
 
 def _normalized_custom_instructions(custom_instructions: str | None) -> str | None:
@@ -63,7 +93,7 @@ def minimal_deriver_prompt(
 
     Args:
         peer_id: The ID of the user being analyzed.
-        messages: All messages in the range (interleaving messages and new turns combined).
+        messages: Batch messages, each wrapped by ``format_deriver_message``.
         existing_conclusions: Semantically retrieved candidate conclusions for agent review.
         candidate_observation: One extracted candidate being evaluated for admission.
 
@@ -128,9 +158,11 @@ Analyze messages to extract **durable, self-contained facts** about the target p
 RULES:
 - The target peer is the peer identified below under `Target peer:`.
 - A peer can be a human user, AI agent, bot, service, or other actor.
+- Each message is wrapped as `<message idx="N" message_id="ID" peer="..." target="true|false" time="...">`. `target="true"` marks messages authored by the target peer; `target="false"` marks everyone else. `message_id` is the database id a conclusion cites as its source; `idx` is only the position in this batch and is never cited.
+- A batch may contain few or no `target="true"` messages, even when it holds many long messages from other peers (agent turns, tool output, system notices). In that case produce few or no conclusions.
 - Refer to the target peer as "the user" in final observations -- never spell out an id, username, or name. The structured observer/observed fields already record identity; the prose only needs "the user".
 - Properly attribute observations to the correct subject: if it is about the target peer, use "the user" as the subject. If the user is referencing someone or something else, name that person or thing explicitly.
-- Extract only observations that clear the SELECTIVITY CRITERIA below, using other speakers' messages as attribution context, not as extraction targets.
+- Extract only observations that clear the SELECTIVITY CRITERIA below, and only from `target="true"` messages. Use `target="false"` messages as attribution context, never as extraction targets: never derive a fact about the user from what another peer said, did, or reported.
 - Contextualize each observation sufficiently (e.g. "the user is nervous about the job interview at the pharmacy" not just "the user is nervous")
 - State each fact once, in its most general wording -- never several variants of the same fact, and never a project-bound wording when a general one is true.
 
@@ -178,7 +210,7 @@ If a statement fails any single criterion, do not extract it. When uncertain whe
 Extract only what the messages support: never invent specifics, list items, or entities the peer did not state, and never let a general-knowledge leap add detail beyond a direct implication. Never infer a team, employer, or affiliation from workflow evidence, and never coin a named concept or mindset label the peer did not use themselves. State the plain fact, never a hedged guess -- an observation that needs "likely" or "probably" is not yet a fact; leave it out.
 
 <examples>
-These examples are fabricated illustrations of the criteria, not facts about the target peer. Never emit a conclusion whose content comes from an example. Every conclusion must be supported by the <messages> block only.
+These examples are fabricated illustrations of the criteria, not facts about the target peer. Never emit a conclusion whose content comes from an example. Every conclusion must be supported by the <messages> block only. Each example shows message content without its `<message>` wrapper, except where the wrapper is the point.
 
 EXAMPLES:
 
@@ -208,6 +240,7 @@ Negative -- extract nothing, explicit: [] is the correct output:
 - "per the steward protocol, run search-before-create first" → explicit: [] (procedural/tooling content, not a fact about the user)
 - "remember this: I want summaries kept short" → EXPLICIT: "the user wants summaries kept short" (extract the preference itself -- NEVER "the user asked to have a preference recorded")
 - "the user balances agent responsiveness with data integrity" is NOT how to record "I like when things load fast but don't want to lose data" → EXPLICIT: "the user prefers fast loading but not at the cost of losing data" (plain form, not the pompous rewrite)
+- `<message target="false" peer="assistant">I read the config file and found the port is 8080</message>` → explicit: [] (another peer acted; a non-target message is context, never an extraction target)
 </examples>
 
 OUTPUT DISCIPLINE: fewer, better observations beat many marginal ones. An empty extraction is a correct, common, and expected result -- never pad the output to justify the call.
