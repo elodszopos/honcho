@@ -23,11 +23,11 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `36881ff8` — upstream's tip; the backlog is closed |
-| Last upstream merge | `36881ff8`, 2026-09-17 |
-| Carried surface | 77 files, +5,163 / -1,995 against `36881ff8`, measured after the commit that records it; 23 further files are fork-only additions |
+| Fork point | `323f7e79` — upstream's tip; the backlog is closed |
+| Last upstream merge | `323f7e79`, 2026-09-23 |
+| Carried surface | 77 files, +5,134 / -1,994 against `323f7e79`, measured after the commit that records it; 23 further files are fork-only additions |
 | Collides with upstream | the next pull's manifest comes from the gap report; nothing is outstanding |
-| Schema | unchanged; `migrations/` is byte-identical to `36881ff8`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
+| Schema | unchanged; `migrations/` is byte-identical to `323f7e79`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
 
 ## Deliberately not carried
 
@@ -200,6 +200,11 @@ overrides say nothing about what a merge would revert. The assertion lives in
 - `mcp/package.json` points `@honcho-ai/sdk` at `file:../sdks/typescript` rather than a
   published version, which is how the fork's conclusion fields reach the MCP tools. Its
   typecheck reads `dist/`, so the SDK must be built first.
+- `mock_tracked_db` in `tests/conftest.py` is one call into `tests/tracked_db_patch.py`, which
+  the live tests also take. An upstream edit to that fixture's body — session lifecycle, a new
+  `tracked_db` import site — is ported into `_tracked_db` and `TRACKED_DB_TARGETS`, never
+  resolved away with the conflict: an unpatched import site writes to whatever database
+  settings resolve to.
 - `src/routers/messages.py` widens upstream's enqueue payload with the message metadata, which
   is how `is_seeded_memory_message` sees a local-memory seed block.
 - Upstream tests that create a conclusion arrive without the admission envelope, because

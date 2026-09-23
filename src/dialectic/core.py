@@ -194,6 +194,14 @@ class DialecticAgent:
         """
         return level_settings.TOOL_CHOICE
 
+    def _force_tools_until(self) -> frozenset[str] | None:
+        """Tools that satisfy a forced tool_choice; None means any tool does."""
+        return None
+
+    def _max_tool_iterations(self, level_settings: DialecticLevelSettings) -> int:
+        """Tool rounds this query gets; defaults to the reasoning level's limit."""
+        return level_settings.MAX_TOOL_ITERATIONS
+
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
         if self._session_history_initialized:
@@ -599,6 +607,7 @@ class DialecticAgent:
         )
 
         model_config = _get_dialectic_level_model_config(self.reasoning_level)
+        max_tool_iterations = self._max_tool_iterations(level_settings)
         logger.info(
             "dialectic.answer llm_start: run_id=%s level=%s model=%s max_tokens=%d max_input_tokens=%d max_tool_iterations=%d tool_choice=%s tools=%d messages=%d input_chars=%d",
             self._run_id,
@@ -606,7 +615,7 @@ class DialecticAgent:
             _model_config_log_fields(model_config),
             max_tokens,
             settings.DIALECTIC.MAX_INPUT_TOKENS,
-            level_settings.MAX_TOOL_ITERATIONS,
+            max_tool_iterations,
             self._tool_choice(level_settings),
             len(tools),
             len(self.messages),
@@ -625,8 +634,9 @@ class DialecticAgent:
                     max_tokens=max_tokens,
                     tools=tools,
                     tool_choice=self._tool_choice(level_settings),
+                    force_tools_until=self._force_tools_until(),
                     tool_executor=tool_executor,
-                    max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                    max_tool_iterations=max_tool_iterations,
                     messages=self.messages,
                     max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                     trace_name="dialectic_chat",
@@ -727,8 +737,9 @@ class DialecticAgent:
                 stream_final_only=True,
                 tools=tools,
                 tool_choice=self._tool_choice(level_settings),
+                force_tools_until=self._force_tools_until(),
                 tool_executor=tool_executor,
-                max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                max_tool_iterations=self._max_tool_iterations(level_settings),
                 messages=self.messages,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",

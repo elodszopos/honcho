@@ -59,7 +59,10 @@ def patch_tracked_db(engine: AsyncEngine) -> Iterator[None]:
         # per-test database here.
         del read_only
         async with session_factory() as session:
-            yield session
+            try:
+                yield session
+            finally:
+                await session.rollback()
 
     # ExitStack rather than a parenthesized `with`: the target list is longer than
     # CPython's 20-statically-nested-block limit.

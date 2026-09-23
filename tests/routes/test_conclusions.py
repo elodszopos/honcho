@@ -796,7 +796,7 @@ class TestConclusionRoutes:
         sample_data: tuple[Workspace, Peer],
     ):
         """The property still reads well-formed metadata source_ids until drain.
-        Malformed ids fail SOURCE_ID_RE and surface as None."""
+        Malformed ids fail SOURCE_ID_RE and surface as an empty list."""
         test_workspace, test_peer = sample_data
 
         # Create another peer
@@ -1039,7 +1039,7 @@ class TestConclusionRoutes:
         assert conclusion["observed_id"] == doc.observed
         assert conclusion["session_id"] == doc.session_name
         assert conclusion["level"] == "explicit"
-        assert conclusion["source_ids"] is None
+        assert conclusion["source_ids"] == []
         assert conclusion["times_derived"] == 1
         assert "created_at" in conclusion
 
