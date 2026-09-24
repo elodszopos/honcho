@@ -23,11 +23,11 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `323f7e79` — upstream's tip; the backlog is closed |
-| Last upstream merge | `323f7e79`, 2026-09-23 |
-| Carried surface | 77 files, +5,134 / -1,994 against `323f7e79`, measured after the commit that records it; 23 further files are fork-only additions |
+| Fork point | `0ba0db57` — upstream's tip; the backlog is closed |
+| Last upstream merge | `0ba0db57`, 2026-09-25 |
+| Carried surface | 77 files, +5,134 / -1,994 against `0ba0db57`, measured after the commit that records it; 23 further files are fork-only additions |
 | Collides with upstream | the next pull's manifest comes from the gap report; nothing is outstanding |
-| Schema | unchanged; `migrations/` is byte-identical to `323f7e79`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
+| Schema | unchanged; `migrations/` is byte-identical to `0ba0db57`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
 
 ## Deliberately not carried
 
@@ -74,7 +74,6 @@ overrides say nothing about what a merge would revert. The assertion lives in
 | `DERIVER.DEDUPLICATE_MAX_DISTANCE` | 0.05, configurable — inert, see caveats | 0.05, a module constant |
 | `DERIVER.MAX_OBSERVATIONS_PER_SESSION` | 0, off | key does not exist |
 | `MAX_CONCLUSION_CHARS` / `CONCLUSION_TARGET_CHARS` | 800 / 500, declared in `src/writing_contract.py` and asserted in `tests/test_llm_writing_contract.py` | 65535, storage ceiling only |
-| SDK version | 2.5.0, the version Hermes pins | upstream's own release cadence |
 | Grounded sources required of an inductive conclusion | 2, mirroring `ConclusionCreate` | 1 |
 
 ## Non-obvious adaptations
@@ -178,9 +177,8 @@ overrides say nothing about what a merge would revert. The assertion lives in
 
 ## Standing caveats for future pulls
 
-- The SDK is installed editable into the agent's venv. A merge that bumps its version
-  breaks the agent's pin; that pin is asserted from the other side in the agent repo's
-  `tests/test_fork_held_values.py`.
+- An SDK version bump runs `uv lock` in hermes-agent in the same pull; a major bump widens
+  the agent's `honcho-ai` range first.
 - `src/config.py` calls `load_dotenv(override=True)` at import, so `.env` beats the process
   environment regardless of the precedence its own settings sources declare.
   `PYTHON_DOTENV_DISABLED=1` turns it off.
