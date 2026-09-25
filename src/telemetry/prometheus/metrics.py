@@ -61,6 +61,7 @@ class DeriverComponents(Enum):
     MESSAGES = "messages"
     PREVIOUS_SUMMARY = "previous_summary"
     OUTPUT_TOTAL = "output_total"
+    ADMISSION = "admission"
 
 
 class DialecticComponents(Enum):
@@ -82,6 +83,7 @@ _DERIVER_TOKEN_COMBOS_BY_TASK: dict[str, tuple[tuple[str, str], ...]] = {
     DeriverTaskTypes.INGESTION.value: (
         (TokenTypes.INPUT.value, DeriverComponents.PROMPT.value),
         (TokenTypes.INPUT.value, DeriverComponents.MESSAGES.value),
+        (TokenTypes.INPUT.value, DeriverComponents.ADMISSION.value),
         (TokenTypes.OUTPUT.value, DeriverComponents.OUTPUT_TOTAL.value),
     ),
     DeriverTaskTypes.SUMMARY.value: (

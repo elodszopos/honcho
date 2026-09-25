@@ -33,7 +33,7 @@ from src.utils.representation import (
     Representation,
 )
 from src.utils.retryable_errors import is_retryable_error
-from src.utils.tokens import track_deriver_input_tokens
+from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .prompts import (
     estimate_deriver_prompt_tokens,
@@ -377,6 +377,10 @@ async def process_representation_tasks_batch(
             ),
             candidate_observation=json.dumps(admission_cases, indent=2),
             custom_instructions=custom_instructions,
+        )
+        track_deriver_input_tokens(
+            task_type=DeriverTaskTypes.INGESTION,
+            components={DeriverComponents.ADMISSION: estimate_tokens(admission_prompt)},
         )
         admission_trace_id = generate_nanoid()
         admission_llm_start = time.perf_counter()

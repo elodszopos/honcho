@@ -7,6 +7,7 @@ import pytest
 from src.deriver.deriver import process_representation_tasks_batch
 from src.llm import HonchoLLMCallResponse
 from src.models import Message
+from src.telemetry.prometheus.metrics import DeriverComponents
 from src.utils.representation import (
     AdmissionDecision,
     AdmissionRepresentation,
@@ -14,6 +15,7 @@ from src.utils.representation import (
     ExtractedRepresentation,
     Representation,
 )
+from src.utils.tokens import estimate_tokens
 
 
 def _message(message_id: int, peer_name: str, content: str) -> Message:
@@ -158,6 +160,68 @@ async def test_admission_is_batched_and_persisted_once_with_candidate_source_ids
     assert event.total_input_tokens == 160
     assert event.output_tokens == 35
     assert event.llm_call_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_admission_pass_input_is_counted_under_its_own_component() -> None:
+    messages = [_message(31, "alice", "I prefer dark mode.")]
+    extraction = _llm_response(
+        ExtractedRepresentation(
+            explicit=[ExtractedObservation(content="The user prefers dark mode")]
+        ),
+        input_tokens=100,
+        output_tokens=20,
+    )
+    admission = _llm_response(
+        AdmissionRepresentation(
+            explicit=[
+                AdmissionDecision(
+                    admission_case_id=0,
+                    content="The user prefers dark mode",
+                    action="create",
+                    reason_for_entry="Durable interface preference",
+                    source_message_ids=[31],
+                )
+            ]
+        ),
+        input_tokens=60,
+        output_tokens=15,
+    )
+
+    with (
+        patch(
+            "src.deriver.deriver.honcho_llm_call",
+            new=AsyncMock(side_effect=[extraction, admission]),
+        ) as llm_call,
+        patch(
+            "src.deriver.deriver.RepresentationManager.get_working_representation",
+            new=AsyncMock(return_value=Representation()),
+        ),
+        patch(
+            "src.deriver.deriver.RepresentationManager.save_representation",
+            new=AsyncMock(return_value=1),
+        ),
+        patch("src.deriver.deriver.emit"),
+        patch("src.deriver.deriver.track_deriver_input_tokens") as track,
+    ):
+        await process_representation_tasks_batch(
+            messages=messages,
+            message_level_configuration=_configuration(),
+            observers=["bob"],
+            observed="alice",
+            queue_item_message_ids=[31],
+            session_id="canonical-session-1",
+        )
+
+    components = [call.kwargs["components"] for call in track.call_args_list]
+    assert [set(counted) for counted in components] == [
+        {DeriverComponents.PROMPT, DeriverComponents.MESSAGES},
+        {DeriverComponents.ADMISSION},
+    ]
+    admission_prompt = llm_call.await_args_list[1].kwargs["prompt"]
+    assert components[1][DeriverComponents.ADMISSION] == estimate_tokens(
+        admission_prompt
+    )
 
 
 @pytest.mark.asyncio

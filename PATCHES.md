@@ -193,8 +193,8 @@ overrides say nothing about what a merge would revert. The assertion lives in
   `REPRESENTATION_BATCH_MAX_AGE_SECONDS` flush. Anything asserting on derivation must exceed
   the claim threshold rather than poll briefly.
 - The deriver makes two LLM calls on any turn that extracts — the extraction pass and the
-  admission pass — where upstream makes one. `CLAUDE.md`'s single-call description is
-  upstream's.
+  admission pass — where upstream makes one; the admission pass counts its input under the
+  `admission` token component. `CLAUDE.md`'s single-call description is upstream's.
 - `mcp/package.json` points `@honcho-ai/sdk` at `file:../sdks/typescript` rather than a
   published version, which is how the fork's conclusion fields reach the MCP tools. Its
   typecheck reads `dist/`, so the SDK must be built first.
