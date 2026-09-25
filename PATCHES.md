@@ -82,8 +82,9 @@ overrides say nothing about what a merge would revert. The assertion lives in
   searched first, and what it rests on; `crud/document` verifies each reference against the
   store and a rejected reference fails the whole batch. Enrichment is a revision — the
   replacement is created and its predecessor retired in one transaction, with the
-  predecessor's admission appended to `admission_history`. Explicit creates are never
-  deduplicated behind the agent's back.
+  predecessor's admission appended to `admission_history`, and a batch that enriches one
+  conclusion twice is refused before any write. Explicit creates are never deduplicated
+  behind the agent's back.
 - Retirement is an admission too. `soft_delete_documents` is the only writer of
   `Document.deleted_at` and takes a required envelope — category, prose reason, actor —
   recorded at `internal_metadata.removal`. Seven paths route through it, four of them system
