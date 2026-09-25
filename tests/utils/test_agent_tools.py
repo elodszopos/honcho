@@ -789,15 +789,19 @@ class TestCreateObservations:
     ):
         workspace, peer1, peer2, session, _, _ = tool_test_data
         admitted_batches: list[list[schemas.ConclusionCreate]] = []
+        forwarded_times: list[str | None] = []
+        sent_at = str(datetime.now(UTC))
 
         async def fake_create_observations(
             _db: AsyncSession,
             workspace_name: str,
             observations: list[schemas.ConclusionCreate],
             embeddings: list[list[float]] | None = None,
+            message_created_at: str | None = None,
         ) -> list[Any]:
             _ = workspace_name, embeddings
             admitted_batches.append(observations)
+            forwarded_times.append(message_created_at)
             return observations
 
         monkeypatch.setattr(
@@ -829,7 +833,7 @@ class TestCreateObservations:
             session_name=session.name,
             workspace_name=workspace.name,
             message_ids=[101, 102],
-            message_created_at=str(datetime.now(UTC)),
+            message_created_at=sent_at,
             run_id="deriver-run-1",
             parent_category="deriver",
             agent_model="test-model",
@@ -840,6 +844,7 @@ class TestCreateObservations:
         assert isinstance(result, ObservationsCreatedResult)
         assert result.created_count == 2
         assert len(admitted_batches) == 1
+        assert forwarded_times == [sent_at]
         first = admitted_batches[0][0]
         assert first.source_message_ids == [101, 102]
         assert first.source_tool_call_id == "tool-call-1"

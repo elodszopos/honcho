@@ -1151,7 +1151,6 @@ async def create_observations(
     entry_origin: Literal["deriver_agent", "dreamer_agent"],
 ) -> ObservationsCreatedResult:
     """Persist one search-backed agent decision per observation."""
-    _ = message_created_at
     if not observations:
         logger.warning("create_observations called with empty list")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
@@ -1229,6 +1228,7 @@ async def create_observations(
             workspace_name=workspace_name,
             observations=admitted,
             embeddings=embeddings,
+            message_created_at=message_created_at,
         )
 
     logger.info(

@@ -27,6 +27,7 @@ from src.exceptions import (
     VectorStoreError,
 )
 from src.utils.filter import apply_filter
+from src.utils.formatting import format_datetime_utc
 from src.vector_store import (
     VectorRecord,
     VectorStore,
@@ -1188,6 +1189,7 @@ async def create_observations(
     workspace_name: str,
     *,
     embeddings: Sequence[list[float]] | None = None,
+    message_created_at: str | None = None,
 ) -> list[models.Document]:
     """
     Create multiple observations (documents) from user input.
@@ -1269,6 +1271,19 @@ async def create_observations(
         )
 
     await _validate_admission_references(db, workspace_name, observations)
+
+    cited_message_ids = {
+        message_id for obs in observations for message_id in obs.source_message_ids
+    }
+    sent_at_by_message: dict[int, datetime.datetime] = {}
+    if cited_message_ids:
+        sent_rows = await db.execute(
+            select(models.Message.id, models.Message.created_at).where(
+                models.Message.workspace_name == workspace_name,
+                models.Message.id.in_(cited_message_ids),
+            )
+        )
+        sent_at_by_message = dict(sent_rows.tuples().all())
 
     # Generate embeddings when the admission caller did not precompute them.
     if embeddings is None:
@@ -1383,6 +1398,18 @@ async def create_observations(
             "admission_history": admission_history,
             "absorbed": absorbed,
         }
+        cited_sent_at = [
+            sent_at_by_message[message_id]
+            for message_id in obs.source_message_ids
+            if message_id in sent_at_by_message
+        ]
+        sent_at = (
+            format_datetime_utc(max(cited_sent_at))
+            if cited_sent_at
+            else message_created_at
+        )
+        if sent_at is not None:
+            internal_metadata["message_created_at"] = sent_at
         source_links = build_source_links(obs.source_ids, workspace_name)
         if store_embeddings_in_postgres:
             doc = models.Document(

@@ -83,8 +83,9 @@ overrides say nothing about what a merge would revert. The assertion lives in
   store and a rejected reference fails the whole batch. Enrichment is a revision — the
   replacement is created and its predecessor retired in one transaction, with the
   predecessor's admission appended to `admission_history`, and a batch that enriches one
-  conclusion twice is refused before any write. Explicit creates are never deduplicated
-  behind the agent's back.
+  conclusion twice is refused before any write. An admission citing messages records the
+  latest one's send time; a dreamer admission records its sources'. Explicit creates are
+  never deduplicated behind the agent's back.
 - Retirement is an admission too. `soft_delete_documents` is the only writer of
   `Document.deleted_at` and takes a required envelope — category, prose reason, actor —
   recorded at `internal_metadata.removal`. Seven paths route through it, four of them system
