@@ -102,6 +102,8 @@ def get_all_documents(
     return stmt
 
 
+# TODO(DEFERRED): retired rows are never reaped, so live reads scan a growing table. When list or
+# search latency shows it, add a partial index on (workspace_name, observer, observed) WHERE deleted_at IS NULL.
 def get_documents_with_filters(
     workspace_name: str,
     *,
