@@ -171,15 +171,15 @@ RULES:
 SELECTIVITY CRITERIA -- a fact must pass ALL four to be extracted:
 1. DURABLE: still true and worth knowing weeks or months from now. Not a one-off status update, a mid-task state, or something whose truth expires within days.
 2. SELF-CONTAINED: understandable on its own, without the surrounding conversation. If it depends on "it," "that," or an unstated referent to make sense, it fails.
-3. NOT TRIVIALLY DISCOVERABLE: if a config file, command output, log, or already-documented setting would answer this just as fast, it is not worth extracting. Extract judgment, preference, and circumstance -- not lookup-able state.
-4. GENUINELY ABOUT THE PEER: a stable trait, preference, standing directive, relationship, or circumstance -- not a description of a tool, a task, or a piece of software.
+3. NOT TRIVIALLY DISCOVERABLE: if a config file, command output, log, or already-documented setting would answer this just as fast, it is not worth extracting. Extract judgment, preference, and circumstance -- not lookup-able state. The tools and platforms the user personally works with every day are circumstance: extract them without versions or settings.
+4. GENUINELY ABOUT THE PEER: a stable trait, preference, standing directive, relationship, or circumstance -- not a description of what a tool, a task, or a piece of software does.
 
 OWNER GATE:
 - Passwords, API keys, tokens, cookies, private keys, recovery codes, and other authenticators
   belong in environment variables or a credential vault. Never extract them.
 - Useful personal identifiers and other PII remain eligible when they pass all four criteria.
   Never reject them merely because they are PII.
-- Tool usage, workflow, and operating procedure belong in the owning skill. Extract nothing.
+- How a tool is used, workflow, and operating procedure belong in the owning skill. Extract nothing.
 - Implemented behavior and internal feature mechanisms belong in code and tests.
   Extract nothing, except a shipped outcome the HARD RULE below admits.
 - Ports, paths, models, versions, and current settings belong in config or documentation. Extract nothing.
@@ -192,7 +192,7 @@ HARD RULE -- outcome vs process: what a project PRODUCED can be worth extracting
 ALWAYS EXCLUDE, regardless of phrasing:
 - Transient state: one-off status ("finished X", "checked Y"), calendar events, meeting logistics, debugging observations -- anything whose truth expires within days.
 - Development mechanics: commit hashes, build numbers, and other opaque identifiers; individual commands that were run or one-off tool invocations ("ran pytest", "executed the migration"). If a message contains only such activity, extract nothing from it.
-- Config-discoverable facts: ports, file paths, provider/model names, service settings, versions, environment variables -- anything readable from config or a command.
+- Config-discoverable facts: ports, file paths, provider/model names, service settings, versions, environment variables -- anything readable from config or a command. Which tools and platforms the user works with is not config detail; their versions and settings are.
 - In-progress task state: "is investigating X", "is working on Y", "is debugging Z" -- these describe a moment, not the peer.
 - Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle/party, current location, or trip-only decisions. This remains excluded after the trip ends -- durable travel history belongs to the authoritative trip project, not global peer conclusions. This exclusion is specific to travel trips and does not override the HARD RULE allowing durable shipped outcomes from software, home, or other non-travel projects.
 - Travel-persona doctrine: travel-specific preferences or directives about itinerary pacing, route order, maps, navigation, parking, ferries, attractions, food, weather, photographic light, hiking, vehicles, lodging, location sharing, or travel-answer/message behavior. Even when durable, standing, or cross-trip, these belong only in the owning travel persona, not global peer conclusions.
@@ -220,11 +220,13 @@ Positive -- clears all four criteria:
 - "My sister Maya just moved to Lisbon" → EXPLICIT: "the user's sister, Maya, lives in Lisbon"
 - "the media server is live on my homelab now, everything streams from there" → EXPLICIT: "the user runs a media server on their homelab that handles their streaming" (shipped outcome -- extractable under the HARD RULE)
 - "python3 is my preferred interpreter for scripting" → EXPLICIT: "the user prefers python3 as their scripting interpreter" (a durable preference -- prose that merely starts with a command word is not a command)
+- "I do everything on macOS in zsh and tmux, and Postgres is my database" → EXPLICIT: "the user works on macOS with zsh and tmux and uses Postgres as their database" (the tools the user works with every day are a durable circumstance)
 - "from now on, always run the test suite before telling me something is done" → EXPLICIT: "the user requires the test suite to be run before work is declared done" (a standing directive -- a durable rule, not a one-off request)
 
 Negative -- extract nothing, explicit: [] is the correct output:
 - "yes, go ahead and do that" → explicit: [] (deixis -- meaning lives outside the text)
 - "the server's running on port 8080 right now" → explicit: [] (config-discoverable, transient)
+- "Postgres 16 runs on port 5432 with shared_buffers at 4GB" → explicit: [] (versions, ports, and settings belong in config)
 - "just finished debugging the auth bug, took forever" → explicit: [] (transient task state)
 - "made a commit with hash 5e090e8, CI is green" → explicit: [] (development mechanics -- opaque identifier plus one-off status)
 - "phase 2 of the intake plan is done, phase 3 will extend the schema" → explicit: [] (project-scoped process -- the plan's road, not its shipped outcome)

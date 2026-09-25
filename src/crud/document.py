@@ -55,6 +55,26 @@ def build_source_links(
     ]
 
 
+def _message_sources(metadata: dict[str, Any] | None) -> list[int]:
+    """Every message id a conclusion rests on, legacy ``message_ids`` included."""
+    if not metadata:
+        return []
+    admission = metadata.get("admission")
+    cited = admission.get("source_message_ids") if isinstance(admission, dict) else None
+    return list(dict.fromkeys([*(cited or []), *(metadata.get("message_ids") or [])]))
+
+
+def _with_message_sources(
+    metadata: dict[str, Any], sources: Sequence[int]
+) -> dict[str, Any]:
+    merged = list(dict.fromkeys([*_message_sources(metadata), *sources]))
+    updated = {**metadata, "message_ids": merged}
+    admission = metadata.get("admission")
+    if isinstance(admission, dict):
+        updated["admission"] = {**admission, "source_message_ids": merged}
+    return updated
+
+
 def get_all_documents(
     workspace_name: str,
     *,
@@ -1014,26 +1034,29 @@ async def soft_delete_documents(
                 )
             count_before = survivor.times_derived
             survivor.times_derived = count_before + doc.times_derived
-            survivor.internal_metadata = {
-                **survivor.internal_metadata,
-                "absorbed": [
-                    *survivor.internal_metadata.get("absorbed", []),
-                    {
-                        "document_id": doc.id,
-                        "content": doc.content,
-                        "times_derived": doc.times_derived,
-                        "admission": doc.internal_metadata.get("admission"),
-                        "session_name": doc.session_name,
-                        "category": removal.category,
-                        "reason": removal.reason,
-                        "absorbed_at": removed_at.isoformat(),
-                        "agent_trace_id": removal.agent_trace_id,
-                        "agent_model": removal.agent_model,
-                        "survivor_count_before": count_before,
-                        "survivor_count_after": survivor.times_derived,
-                    },
-                ],
-            }
+            survivor.internal_metadata = _with_message_sources(
+                {
+                    **survivor.internal_metadata,
+                    "absorbed": [
+                        *survivor.internal_metadata.get("absorbed", []),
+                        {
+                            "document_id": doc.id,
+                            "content": doc.content,
+                            "times_derived": doc.times_derived,
+                            "admission": doc.internal_metadata.get("admission"),
+                            "session_name": doc.session_name,
+                            "category": removal.category,
+                            "reason": removal.reason,
+                            "absorbed_at": removed_at.isoformat(),
+                            "agent_trace_id": removal.agent_trace_id,
+                            "agent_model": removal.agent_model,
+                            "survivor_count_before": count_before,
+                            "survivor_count_after": survivor.times_derived,
+                        },
+                    ],
+                },
+                _message_sources(doc.internal_metadata),
+            )
         doc.internal_metadata = {**doc.internal_metadata, "removal": envelope}
         doc.deleted_at = removed_at
         retired.append((doc.id, doc.level))
@@ -1371,8 +1394,13 @@ async def create_observations(
         # overwrite only what admission owns. Building a fresh dict silently drops
         # whatever the last change added -- scope provenance, message timestamps.
         internal_metadata = dict(previous_metadata)
+        source_message_ids = list(
+            dict.fromkeys(
+                [*obs.source_message_ids, *_message_sources(previous_metadata)]
+            )
+        )
         internal_metadata |= {
-            "message_ids": obs.source_message_ids,
+            "message_ids": source_message_ids,
             "premises": obs.premises or None,
             "sources": obs.sources or None,
             "pattern_type": obs.pattern_type,
@@ -1384,7 +1412,7 @@ async def create_observations(
                 "reason_for_entry": obs.reason_for_entry,
                 "searched_conclusion_ids": obs.searched_conclusion_ids,
                 "search_query": obs.search_query,
-                "source_message_ids": obs.source_message_ids,
+                "source_message_ids": source_message_ids,
                 "source_tool_call_id": obs.source_tool_call_id,
                 "source_ids": obs.source_ids,
                 "premises": obs.premises,

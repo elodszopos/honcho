@@ -84,7 +84,8 @@ overrides say nothing about what a merge would revert. The assertion lives in
   replacement is created and its predecessor retired in one transaction, with the
   predecessor's admission appended to `admission_history`, and a batch that enriches one
   conclusion twice is refused before any write. An admission citing messages records the
-  latest one's send time; a dreamer admission records its sources'. Explicit creates are
+  latest one's send time; a dreamer admission records its sources'. A revision and an
+  absorbing survivor list every message their predecessors cited. Explicit creates are
   never deduplicated behind the agent's back.
 - Retirement is an admission too. `soft_delete_documents` is the only writer of
   `Document.deleted_at` and takes a required envelope — category, prose reason, actor —
@@ -174,8 +175,8 @@ overrides say nothing about what a merge would revert. The assertion lives in
 - `has_pending_work` counts a retired row only behind an external vector store and only until
   it is `purged`; upstream's unguarded check is always true against permanent retirement. Held
   by `tests/reconciler/test_sync_vectors_enqueue_gate.py`.
-- Local-memory seed blocks stay stored and searchable while staying out of representation,
-  summary, dream and queue generation.
+- A local-memory seed block creates no queue work of its own; a summary triggered by a later
+  message still reads it. Hermes no longer uploads these blocks when a session opens.
 
 ## Standing caveats for future pulls
 

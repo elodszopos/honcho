@@ -12,8 +12,8 @@ count each brought. `removal` says why it was retired, and is absent while it is
 | Event | What happens | Where it is recorded |
 |---|---|---|
 | create | a new row, count starts at one | `admission` |
-| enrich | a replacement row is written and its predecessor retired in one transaction | predecessor's envelope appended to the replacement's `admission_history` |
-| absorb | the retired conclusion's count moves onto a named survivor | snapshot appended to the survivor's `absorbed` |
+| enrich | a replacement row is written and its predecessor retired in one transaction; the replacement cites its own messages plus every message the predecessor cited | predecessor's envelope appended to the replacement's `admission_history` |
+| absorb | the retired conclusion's count and cited messages move onto a named survivor | snapshot appended to the survivor's `absorbed` |
 | retire | the row stops being live but is kept | `removal` on the row |
 
 A retired row is permanent and keeps its vector. Nothing reaps it. Session and workspace
@@ -58,7 +58,7 @@ those sources twice.
 | what does this peer know | conclusion list, or semantic query |
 | what was retired here and why | conclusion list with `include_deleted` |
 | what happened to this one memory | the lineage route for that conclusion |
-| what did this message put into memory | conclusion list filtered on `admission.source_message_ids` |
+| what did this message put into memory | conclusion list filtered on `admission.source_message_ids`; it finds the live version and every retired one built on the message |
 | what did this Hermes instance do, including failures | the plugin's local mutation log |
 
 Messages carry two ids. The public one identifies the message to clients; `internal_id` is
@@ -79,6 +79,7 @@ conclusion — search never returns one.
 | a retired conclusion never reaches a deriving agent | `include_deleted` exists on the list builder alone |
 | an absorbed count is never lost | the transfer happens inside the retirement, under the survivor's lock |
 | a revision inherits the whole ledger | one metadata owner starts from the predecessor and overwrites only what admission owns |
+| a live conclusion cites every message it rests on | enrich and absorb merge the predecessor's `source_message_ids` and legacy `message_ids` into the survivor's |
 
 Held-value tests enforce the first three by reading source: one scans for any other writer of
 `deleted_at`, one inventories every document query so a new one fails until it gets a verdict on
