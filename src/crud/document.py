@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -1206,6 +1207,20 @@ async def create_observations(
     """
     if not observations:
         return []
+
+    duplicate_targets = sorted(
+        target_id
+        for target_id, count in Counter(
+            obs.target_id for obs in observations if obs.target_id
+        ).items()
+        if count > 1
+    )
+    if duplicate_targets:
+        raise ValidationException(
+            "More than one case enriches "
+            + ", ".join(duplicate_targets)
+            + "; enrich each conclusion once per batch"
+        )
 
     # Collect unique sessions and peer pairs to validate
     sessions_to_validate: set[str] = set()

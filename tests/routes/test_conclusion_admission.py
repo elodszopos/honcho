@@ -938,7 +938,7 @@ def test_batch_enrichment_conflict_rolls_back_every_replacement(
         json={"conclusions": replacements},
     )
     assert response.status_code == 422
-    assert "changed during admission" in response.text
+    assert f"More than one case enriches {old_id}" in response.text
 
     active = _search(
         client,
