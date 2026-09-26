@@ -1,5 +1,6 @@
 """The automatic dialectic answers from one prefetched block with no tools."""
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -208,6 +209,39 @@ class TestAutomaticAgent:
             evidence.conclusions
         )
         assert evidence.build().messages
+
+    async def test_prefetch_and_answer_are_logged_with_their_counts(
+        self, automatic_data: Any, caplog: pytest.LogCaptureFixture
+    ):
+        caplog.set_level(logging.INFO, logger="src.dialectic.automatic")
+        await run_answer(make_agent(automatic_data))
+        await run_answer(make_agent(automatic_data), content="NONE")
+
+        prefetch = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("dialectic.automatic prefetch:")
+        ]
+        answers = [
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("dialectic.automatic answer:")
+        ]
+        assert prefetch, "no prefetch line"
+        line = prefetch[0]
+        for fragment in (
+            "excluded_ids=1",
+            "known=1",
+            "conclusions_found=3",
+            "conclusions_kept=2",
+            "excerpts_kept=1",
+            "summaries=1",
+            "exclude_session=True",
+        ):
+            assert fragment in line, f"{fragment} missing from {line}"
+        assert "excerpts_from_excluded_session=" in line
+        assert "outcome=answer" in answers[0]
+        assert "outcome=none chars=0" in answers[1]
 
     async def test_zero_limits_prefetch_nothing_but_known(self, automatic_data: Any):
         agent = make_agent(

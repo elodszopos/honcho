@@ -2,6 +2,7 @@
 conclusions the caller already holds come back to the model as known."""
 
 import logging
+import time
 from typing import Any
 
 from src import models, schemas
@@ -56,6 +57,7 @@ class AutomaticDialecticAgent(DialecticAgent):
             evidence=evidence,
         )
         self.options: schemas.AutomaticChatOptions = options
+        self._prefetch_stats: dict[str, float] = {}
         self.messages[0] = {
             "role": "system",
             "content": prompts.automatic_system_prompt(
@@ -79,6 +81,7 @@ class AutomaticDialecticAgent(DialecticAgent):
 
     async def _prefetch_relevant_observations(self, query: str) -> str | None:
         options = self.options
+        started = time.perf_counter()
         try:
             with embedding_call_purpose(
                 EmbeddingCallPurpose.DIALECTIC_PREFETCH.value,
@@ -88,12 +91,19 @@ class AutomaticDialecticAgent(DialecticAgent):
                 session_id=self.session_id,
             ):
                 embedding = await embedding_client.embed(options.search_text)
+            self._prefetch_stats["embed_ms"] = (time.perf_counter() - started) * 1000
             on_topic = await self._on_topic_conclusions(embedding)
             known = await self._known_conclusions()
             snippets = await self._excerpts(embedding)
             summaries = await self._summaries_for(snippets)
         except Exception as e:
-            logger.warning(f"Failed to prefetch automatic context: {e}")
+            logger.warning(
+                "dialectic.automatic prefetch failed: run_id=%s elapsed_ms=%.1f error=%s: %s",
+                self._run_id,
+                (time.perf_counter() - started) * 1000,
+                type(e).__name__,
+                e,
+            )
             return None
 
         self._prefetched_conclusion_count = len(on_topic)
@@ -101,7 +111,29 @@ class AutomaticDialecticAgent(DialecticAgent):
             self.evidence.add_documents(on_topic)
             for _, context in snippets:
                 self.evidence.add_messages(context)
-        return _render(known, on_topic, snippets, summaries)
+        rendered = _render(known, on_topic, snippets, summaries)
+        stats = self._prefetch_stats
+        logger.info(
+            "dialectic.automatic prefetch: run_id=%s search_chars=%d excluded_ids=%d known=%d conclusions_found=%d conclusions_kept=%d excerpts_found=%d excerpts_kept=%d excerpts_from_excluded_session=%d summaries=%d conclusion_limit=%d excerpt_limit=%d max_answer_chars=%d exclude_session=%s embed_ms=%.1f elapsed_ms=%.1f rendered_chars=%d",
+            self._run_id,
+            len(options.search_text),
+            len(options.exclude_conclusion_ids),
+            len(known),
+            int(stats.get("conclusions_found", 0)),
+            len(on_topic),
+            int(stats.get("excerpts_found", 0)),
+            len(snippets),
+            int(stats.get("excerpts_from_excluded_session", 0)),
+            len(summaries),
+            options.conclusion_limit,
+            options.excerpt_limit,
+            options.max_answer_chars,
+            bool(options.exclude_session_id),
+            stats.get("embed_ms", 0.0),
+            (time.perf_counter() - started) * 1000,
+            len(rendered or ""),
+        )
+        return rendered
 
     async def _on_topic_conclusions(
         self, embedding: list[float]
@@ -121,6 +153,7 @@ class AutomaticDialecticAgent(DialecticAgent):
             session_allowlist=self.session_allowlist,
             documents_out=found,
         )
+        self._prefetch_stats["conclusions_found"] = len(found)
         return [doc for doc in found if doc.id not in excluded][
             : options.conclusion_limit
         ]
@@ -158,6 +191,8 @@ class AutomaticDialecticAgent(DialecticAgent):
             if options.exclude_session_id and session == options.exclude_session_id:
                 continue
             kept.append((matches, context))
+        self._prefetch_stats["excerpts_found"] = len(snippets)
+        self._prefetch_stats["excerpts_from_excluded_session"] = len(snippets) - len(kept)
         return kept[: options.excerpt_limit]
 
     async def _summaries_for(self, snippets: list[Snippet]) -> dict[str, str]:
@@ -176,12 +211,17 @@ class AutomaticDialecticAgent(DialecticAgent):
 
     async def answer(self, query: str, response_model: type[Any] | None = None) -> str:
         content = await super().answer(query, response_model=response_model)
-        if (
+        is_none = (
             response_model is None
             and content.strip().strip(".").upper() == _NONE_ANSWER
-        ):
-            return ""
-        return content
+        )
+        logger.info(
+            "dialectic.automatic answer: run_id=%s outcome=%s chars=%d",
+            self._run_id,
+            "none" if is_none else "answer",
+            0 if is_none else len(content),
+        )
+        return "" if is_none else content
 
 
 def _render(
