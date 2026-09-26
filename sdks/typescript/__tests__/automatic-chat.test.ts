@@ -46,7 +46,6 @@ describe('Peer chat automatic option', () => {
           searchText: 'reminder job | fire at 9',
           excludeConclusionIds: ['c-1', 'c-2'],
           excludeSessionId: 'thread-1',
-          conclusionLimit: 7,
           excerptLimit: 3,
           maxAnswerChars: 600,
         },
@@ -60,7 +59,6 @@ describe('Peer chat automatic option', () => {
       search_text: 'reminder job | fire at 9',
       exclude_conclusion_ids: ['c-1', 'c-2'],
       exclude_session_id: 'thread-1',
-      conclusion_limit: 7,
       excerpt_limit: 3,
       max_answer_chars: 600,
     })
@@ -89,7 +87,6 @@ describe('Peer chat automatic option', () => {
 
   test.each([
     { searchText: '' },
-    { searchText: 'reminder job', conclusionLimit: 51 },
     { searchText: 'reminder job', excerptLimit: 21 },
     { searchText: 'reminder job', maxAnswerChars: 99 },
     { searchText: 'reminder job', excludeConclusionIds: Array(201).fill('c') },

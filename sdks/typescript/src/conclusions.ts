@@ -279,6 +279,7 @@ export class ConclusionsView {
     query: string
     top_k?: number
     distance?: number
+    per_thought?: boolean
     filters?: Record<string, unknown>
   }): Promise<ConclusionResponse[]> {
     await this._ensureWorkspace()
@@ -460,18 +461,21 @@ export class ConclusionsView {
    *   endpoint — e.g. `{ level: 'deductive' }` to search only conclusions
    *   derived during dreaming. See
    *   https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
+   * @param perThought - Search each thought of the query on its own, rank at best distance
    */
   async query(
     query: string,
     topK: number = 10,
     distance?: number,
-    filters?: Record<string, unknown>
+    filters?: Record<string, unknown>,
+    perThought?: boolean
   ): Promise<Conclusion[]> {
     rejectReservedFilterKeys(filters, VIEW_RESERVED_KEYS)
     const response = await this._query({
       query,
       top_k: topK,
       distance,
+      per_thought: perThought ? true : undefined,
       filters: {
         observer_id: this.observer,
         observed_id: this.observed,

@@ -1,28 +1,29 @@
 """Automatic dialectic: one prefetch on the caller's search text, one model call, no tools;
 conclusions the caller already holds come back to the model as known."""
 
+import json
 import logging
 import time
 from typing import Any
 
 from src import models, schemas
 from src.config import DialecticLevelSettings, ReasoningLevel
-from src.crud.document import fetch_documents_by_ids
-from src.crud.message import search_messages
+from src.crud.document import embed_thoughts, fetch_documents_by_ids
+from src.crud.message import search_message_snippets
 from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.dialectic.core import DialecticAgent
-from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils import summarizer
-from src.utils.agent_tools import search_memory
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
-_EXCERPT_MESSAGE_CHARS = 600
+_EXCERPT_MESSAGE_CHARS = 400
+_MIN_EXCERPT_MESSAGE_CHARS = 40
+_SUMMARY_CHARS = 300
 _NONE_ANSWER = "NONE"
 
 Snippet = tuple[list[models.Message], list[models.Message]]
@@ -90,11 +91,10 @@ class AutomaticDialecticAgent(DialecticAgent):
                 parent_category="dialectic",
                 session_id=self.session_id,
             ):
-                embedding = await embedding_client.embed(options.search_text)
+                embeddings = await embed_thoughts(options.search_text)
             self._prefetch_stats["embed_ms"] = (time.perf_counter() - started) * 1000
-            on_topic = await self._on_topic_conclusions(embedding)
             known = await self._known_conclusions()
-            snippets = await self._excerpts(embedding)
+            snippets = await self._excerpts(embeddings)
             summaries = await self._summaries_for(snippets)
         except Exception as e:
             logger.warning(
@@ -106,57 +106,27 @@ class AutomaticDialecticAgent(DialecticAgent):
             )
             return None
 
-        self._prefetched_conclusion_count = len(on_topic)
+        self._prefetched_conclusion_count = 0
         if self.evidence is not None:
-            self.evidence.add_documents(on_topic)
             for _, context in snippets:
                 self.evidence.add_messages(context)
-        rendered = _render(known, on_topic, snippets, summaries)
-        stats = self._prefetch_stats
+        rendered = _render(known, snippets, summaries)
         logger.info(
-            "dialectic.automatic prefetch: run_id=%s search_chars=%d excluded_ids=%d known=%d conclusions_found=%d conclusions_kept=%d excerpts_found=%d excerpts_kept=%d excerpts_from_excluded_session=%d summaries=%d conclusion_limit=%d excerpt_limit=%d max_answer_chars=%d exclude_session=%s embed_ms=%.1f elapsed_ms=%.1f rendered_chars=%d",
+            "dialectic.automatic prefetch: run_id=%s search_chars=%d thoughts=%d known=%d excerpts=%d summaries=%d excerpt_limit=%d max_answer_chars=%d exclude_session=%s embed_ms=%.1f elapsed_ms=%.1f rendered_chars=%d",
             self._run_id,
             len(options.search_text),
-            len(options.exclude_conclusion_ids),
+            len(embeddings),
             len(known),
-            int(stats.get("conclusions_found", 0)),
-            len(on_topic),
-            int(stats.get("excerpts_found", 0)),
             len(snippets),
-            int(stats.get("excerpts_from_excluded_session", 0)),
             len(summaries),
-            options.conclusion_limit,
             options.excerpt_limit,
             options.max_answer_chars,
             bool(options.exclude_session_id),
-            stats.get("embed_ms", 0.0),
+            self._prefetch_stats.get("embed_ms", 0.0),
             (time.perf_counter() - started) * 1000,
             len(rendered or ""),
         )
         return rendered
-
-    async def _on_topic_conclusions(
-        self, embedding: list[float]
-    ) -> list[models.Document]:
-        options = self.options
-        if options.conclusion_limit <= 0:
-            return []
-        excluded = set(options.exclude_conclusion_ids)
-        found: list[models.Document] = []
-        await search_memory(
-            workspace_name=self.workspace_name,
-            observer=self.observer,
-            observed=self.observed,
-            query=options.search_text,
-            limit=options.conclusion_limit + len(excluded),
-            embedding=embedding,
-            session_allowlist=self.session_allowlist,
-            documents_out=found,
-        )
-        self._prefetch_stats["conclusions_found"] = len(found)
-        return [doc for doc in found if doc.id not in excluded][
-            : options.conclusion_limit
-        ]
 
     async def _known_conclusions(self) -> list[models.Document]:
         ids = self.options.exclude_conclusion_ids
@@ -170,30 +140,37 @@ class AutomaticDialecticAgent(DialecticAgent):
                 db.expunge(doc)
         return documents
 
-    async def _excerpts(self, embedding: list[float]) -> list[Snippet]:
+    async def _excerpts(self, embeddings: list[list[float]]) -> list[Snippet]:
         options = self.options
-        if options.excerpt_limit <= 0:
+        if options.excerpt_limit <= 0 or not embeddings:
             return []
-        fetch = options.excerpt_limit + (3 if options.exclude_session_id else 0)
-        snippets = await search_messages(
+        snippets, distances = await search_message_snippets(
             self.workspace_name,
-            None,
-            options.search_text,
-            limit=fetch,
+            embeddings,
+            limit=options.excerpt_limit,
             context_window=1,
-            embedding=embedding,
             observer=self.observer,
             session_allowlist=self.session_allowlist,
+            exclude_session_name=options.exclude_session_id,
+            min_chars=_MIN_EXCERPT_MESSAGE_CHARS,
         )
-        kept: list[Snippet] = []
-        for matches, context in snippets:
-            session = context[0].session_name if context else None
-            if options.exclude_session_id and session == options.exclude_session_id:
-                continue
-            kept.append((matches, context))
-        self._prefetch_stats["excerpts_found"] = len(snippets)
-        self._prefetch_stats["excerpts_from_excluded_session"] = len(snippets) - len(kept)
-        return kept[: options.excerpt_limit]
+        hits = [
+            {
+                "rank": rank,
+                "session": context[0].session_name if context else None,
+                "ids": [message.public_id for message in matches],
+                "distances": [
+                    _rounded(distances.get(message.public_id)) for message in matches
+                ],
+            }
+            for rank, (matches, context) in enumerate(snippets, 1)
+        ]
+        logger.info(
+            "dialectic.automatic excerpts: run_id=%s hits=%s",
+            self._run_id,
+            json.dumps(hits),
+        )
+        return snippets
 
     async def _summaries_for(self, snippets: list[Snippet]) -> dict[str, str]:
         names = {context[0].session_name for _, context in snippets if context}
@@ -224,9 +201,12 @@ class AutomaticDialecticAgent(DialecticAgent):
         return "" if is_none else content
 
 
+def _rounded(value: float | None) -> float | None:
+    return None if value is None else round(float(value), 4)
+
+
 def _render(
     known: list[models.Document],
-    on_topic: list[models.Document],
     snippets: list[Snippet],
     summaries: dict[str, str],
 ) -> str | None:
@@ -236,11 +216,6 @@ def _render(
             "## Known to the assistant\n"
             + "\n".join(f"- {doc.content}" for doc in known)
         )
-    if on_topic:
-        parts.append(
-            "## Conclusions on topic\n"
-            + "\n".join(f"- {doc.content}" for doc in on_topic)
-        )
     if snippets:
         blocks: list[str] = []
         for index, (_, context) in enumerate(snippets, 1):
@@ -248,7 +223,7 @@ def _render(
             head = f"### Thread {index} ({session})"
             summary = summaries.get(session)
             if summary:
-                head += f"\nSummary: {summary}"
+                head += f"\nSummary: {summary[:_SUMMARY_CHARS]}"
             lines = [
                 format_new_turn_with_timestamp(
                     message.content[:_EXCERPT_MESSAGE_CHARS],

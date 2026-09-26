@@ -18,6 +18,7 @@ from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
+from .hnsw import widen_hnsw_scan
 from .peer import reject_scope_peers
 from .session import get_or_create_session
 
@@ -1009,6 +1010,95 @@ async def search_messages(
         observer=observer,
         session_allowlist=session_allowlist,
     )
+
+
+async def search_message_snippets(
+    workspace_name: str,
+    embeddings: list[list[float]],
+    *,
+    limit: int,
+    context_window: int = 1,
+    observer: str | None = None,
+    session_allowlist: list[str] | None = None,
+    exclude_session_name: str | None = None,
+    min_chars: int = 0,
+) -> tuple[list[tuple[list[models.Message], list[models.Message]]], dict[str, float]]:
+    """Snippets around the messages closest to any of ``embeddings``, each message ranked at its
+    best distance, closest first. The second value maps each matched message id to that distance.
+    ``exclude_session_name`` and ``min_chars`` filter inside the query, so they never eat result slots.
+    """
+    if not embeddings or limit <= 0:
+        return [], {}
+    allowed_session_names, deny = await resolve_session_scope(
+        None,
+        workspace_name,
+        None,
+        session_allowlist,
+        observer,
+        operation_name="message.search_snippets",
+    )
+    if deny:
+        return [], {}
+
+    if settings.VECTOR_STORE.TYPE != "pgvector" and settings.VECTOR_STORE.MIGRATED:
+        snippets = await _semantic_search_messages(
+            workspace_name,
+            None,
+            query_embedding=embeddings[0],
+            limit=limit,
+            context_window=context_window,
+            operation_name="message.search_snippets",
+            observer=observer,
+            session_allowlist=session_allowlist,
+        )
+        kept = [
+            snippet
+            for snippet in snippets
+            if not (
+                exclude_session_name
+                and snippet[1]
+                and snippet[1][0].session_name == exclude_session_name
+            )
+        ]
+        return kept[:limit], {}
+
+    best: dict[str, tuple[float, models.Message]] = {}
+    async with tracked_db("message.search_snippets", read_only=True) as db:
+        await widen_hnsw_scan(db)
+        for embedding in embeddings:
+            distance = models.MessageEmbedding.embedding.cosine_distance(embedding)
+            stmt = (
+                select(models.Message, distance.label("distance"))
+                .join(
+                    models.MessageEmbedding,
+                    models.Message.public_id == models.MessageEmbedding.message_id,
+                )
+                .where(models.MessageEmbedding.embedding.isnot(None))
+                .where(models.MessageEmbedding.workspace_name == workspace_name)
+                .order_by(distance)
+                .limit(limit * 2)
+            )
+            if allowed_session_names is not None:
+                stmt = stmt.where(
+                    models.MessageEmbedding.session_name.in_(allowed_session_names)
+                )
+            if exclude_session_name:
+                stmt = stmt.where(
+                    models.MessageEmbedding.session_name != exclude_session_name
+                )
+            if min_chars > 0:
+                stmt = stmt.where(func.length(models.Message.content) >= min_chars)
+            for message, value in (await db.execute(stmt)).all():
+                value = float(value)
+                current = best.get(message.public_id)
+                if current is None or value < current[0]:
+                    best[message.public_id] = (value, message)
+        ranked = sorted(best.values(), key=lambda item: item[0])[:limit]
+        snippets = await _build_merged_snippets(
+            db, workspace_name, [message for _, message in ranked], context_window
+        )
+        _expunge_snippets(db, snippets)
+    return snippets, {message.public_id: value for value, message in ranked}
 
 
 async def _grep_messages_internal(

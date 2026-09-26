@@ -63,24 +63,12 @@ def _custom_instructions_section(custom_instructions: str | None) -> str:
         f"""
         CUSTOM INSTRUCTIONS:
         These instructions apply to the target peer identified below.
-        Custom instructions may narrow extraction further, but they cannot override or relax the OWNER GATE or ALWAYS EXCLUDE rules.
+        Custom instructions may narrow extraction further, but they cannot override or relax the NEVER EXTRACT rules.
         {normalized_custom_instructions}
         """
     )
 
 
-# TODO(REVISIT): whether the ALWAYS EXCLUDE taxonomy below holds is not yet
-# measurable. Retirement only began preserving rows on 2026-09-06 (4685ac4c);
-# before that it removed them, so nothing survives to show what the deriver
-# produced or what the janitor took back out. The current pool is a sample of
-# what escaped deletion, which is the opposite of the population in question --
-# do not read origin counts off it. From now on retired rows persist, so measure
-# the real rates first: group live and retired rows by `internal_metadata`
-# origin and by `removal.category`, over a window that starts after the change.
-# Only then decide whether the fix belongs in this taxonomy, in the admission
-# pass, or in the steward doctrine that governs what agents write directly.
-# Keep this note OUTSIDE the f-string below -- inside it, it ships to the model
-# as prompt text.
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
@@ -96,6 +84,7 @@ def minimal_deriver_prompt(
         messages: Batch messages, each wrapped by ``format_deriver_message``.
         existing_conclusions: Semantically retrieved candidate conclusions for agent review.
         candidate_observation: One extracted candidate being evaluated for admission.
+        custom_instructions: Optional narrowing instructions for the target peer.
 
     Returns:
         Formatted prompt string for observation extraction.
@@ -113,9 +102,8 @@ def minimal_deriver_prompt(
             SOURCE-GROUNDING RULES:
             - Re-read the original messages below before deciding.
             - Use only message IDs shown in the original messages.
-            - Select the exact target-peer message IDs that support each admitted conclusion.
-            - Never cite a message authored by another peer.
-            - Preserve only claims, qualifiers, scope, negation, and temporal bounds supported by the selected messages.
+            - Cite the message that states the conclusion and the user's message that asked for it, confirmed it or built on it; at least one cited message is the user's.
+            - Preserve only claims, qualifiers, scope, negation and temporal bounds the cited messages support.
             - Return no decision when an extracted candidate overstates or misattributes the source.
             """
         )
@@ -134,7 +122,7 @@ def minimal_deriver_prompt(
             - Never target a conclusion id that is absent from that admission case.
             - Copy the case's `admission_case_id` into its decision.
             - Return at most one decision per admission case.
-            - Supply a specific `reason_for_entry` that explains why the result passes the selectivity criteria.
+            - Supply a specific `reason_for_entry` that names what the conclusion is for and why it lasts.
             - Return no decision for a case when the messages do not justify durable memory.
             - Return all admitted cases together in one `explicit` list.
 
@@ -148,104 +136,73 @@ def minimal_deriver_prompt(
         )
     return c(
         f"""
-Analyze messages to extract **durable, self-contained facts** about the target peer -- not everything they say, only what is worth remembering weeks from now.
+Extract the conclusions this conversation reached that a later conversation on the same topic would need, and the facts it established about the target peer.
 
-[EXPLICIT] DEFINITION: Facts about the target peer that are directly stated or unambiguously implied by their own messages.
-   - Transform statements into conclusions only when a conclusion clears every SELECTIVITY CRITERION below.
-   - Each conclusion must be self-contained with enough context to be understood in isolation, weeks or months from now.
-   - When a fact is genuinely time-bound, use absolute dates (e.g. "June 26, 2025" not "yesterday"). Do NOT stamp a durable preference, trait, or standing directive with the date it happened to be mentioned -- a standing preference is not a dated event, and prefixing it with a date wrongly implies it expires.
+TARGET PEER AND MESSAGES:
+- The target peer is named under `Target peer:` below and is called "the user" in every conclusion; never an id, username or name.
+- Each message is wrapped as `<message idx="N" message_id="ID" peer="..." target="true|false" time="...">`. `target="true"` marks the user's own messages. `message_id` is the database id a conclusion cites; `idx` is never cited.
+- A conclusion may come from any peer's message. One another peer stated counts once the user accepted it: agreed, built on it, or continued without contradicting it.
+- A batch with no `target="true"` message yields nothing: nothing in it was accepted.
+- Name other people, projects, jobs, systems and places explicitly.
 
-RULES:
-- The target peer is the peer identified below under `Target peer:`.
-- A peer can be a human user, AI agent, bot, service, or other actor.
-- Each message is wrapped as `<message idx="N" message_id="ID" peer="..." target="true|false" time="...">`. `target="true"` marks messages authored by the target peer; `target="false"` marks everyone else. `message_id` is the database id a conclusion cites as its source; `idx` is only the position in this batch and is never cited.
-- A batch may contain few or no `target="true"` messages, even when it holds many long messages from other peers (agent turns, tool output, system notices). In that case produce few or no conclusions.
-- Refer to the target peer as "the user" in final observations -- never spell out an id, username, or name. The structured observer/observed fields already record identity; the prose only needs "the user".
-- Properly attribute observations to the correct subject: if it is about the target peer, use "the user" as the subject. If the user is referencing someone or something else, name that person or thing explicitly.
-- Extract only observations that clear the SELECTIVITY CRITERIA below, and only from `target="true"` messages. Use `target="false"` messages as attribution context, never as extraction targets: never derive a fact about the user from what another peer said, did, or reported.
-- Contextualize each observation sufficiently (e.g. "the user is nervous about the job interview at the pharmacy" not just "the user is nervous")
-- State each fact once, in its most general wording -- never several variants of the same fact, and never a project-bound wording when a general one is true.
+WHAT A CONCLUSION IS, extract every one that qualifies:
+- A fact the conversation established about a topic: what exists, how something works, a finding, a root cause, an outcome.
+- A decision, ruling or requirement for a stream of work: how the user wants a specific thing done, what was agreed, what was rejected.
+- A pointer: where something lives, a job, skill, file, channel, path or name, when a later conversation would look for it.
+- The user's relationship to a topic: what they run, maintain, use or care about, and why.
+- A fact about the user: a preference, trait, relationship or circumstance. A later pass files always-relevant ones elsewhere; extract them here.
+- Any topic qualifies: work, projects, home, health, money, people, hobbies.
+
+HOW TO WRITE ONE:
+- Name the topic inside the conclusion so it is found when the topic comes up ("For the upstream gap jobs, ...", "The user's home network ...").
+- One fact per conclusion, self-contained, understandable months later without the conversation.
+- Plain wording, no hedging, no inflation; "the user prefers X" never becomes a philosophy or a coined label.
+- Absolute dates for time-bound facts ("June 26, 2025", never "yesterday"); no date on a standing preference or rule.
+- Keep the behavioral hook when there is one: when, do, avoid.
 
 {CONCLUSION_WRITING_CONTRACT}
 
-SELECTIVITY CRITERIA -- a fact must pass ALL four to be extracted:
-1. DURABLE: still true and worth knowing weeks or months from now. Not a one-off status update, a mid-task state, or something whose truth expires within days.
-2. SELF-CONTAINED: understandable on its own, without the surrounding conversation. If it depends on "it," "that," or an unstated referent to make sense, it fails.
-3. NOT TRIVIALLY DISCOVERABLE: if a config file, command output, log, or already-documented setting would answer this just as fast, it is not worth extracting. Extract judgment, preference, and circumstance -- not lookup-able state. The tools and platforms the user personally works with every day are circumstance: extract them without versions or settings.
-4. GENUINELY ABOUT THE PEER: a stable trait, preference, standing directive, relationship, or circumstance -- not a description of what a tool, a task, or a piece of software does.
-
-OWNER GATE:
-- Passwords, API keys, tokens, cookies, private keys, recovery codes, and other authenticators
-  belong in environment variables or a credential vault. Never extract them.
-- Useful personal identifiers and other PII remain eligible when they pass all four criteria.
-  Never reject them merely because they are PII.
-- How a tool is used, workflow, and operating procedure belong in the owning skill. Extract nothing.
-- Implemented behavior and internal feature mechanisms belong in code and tests.
-  Extract nothing, except a shipped outcome the HARD RULE below admits.
-- Ports, paths, models, versions, and current settings belong in config or documentation. Extract nothing.
-- Project decisions, implementation plans, and live task state belong in project state or Personal OS.
-  Extract nothing.
-- Only qualifying personal facts, preferences, relationships, directives, and circumstances are eligible.
-
-HARD RULE -- outcome vs process: what a project PRODUCED can be worth extracting -- a system, tool, or capability that now exists and stays relevant ("runs a self-hosted memory service", "gets a morning brief delivered to Slack"). The PROCESS of getting there never is: plans, phases, design choices, scoping decisions, build steps, mid-build corrections. Plans finish and their process facts die with them; only the shipped artifact lives on.
-
-ALWAYS EXCLUDE, regardless of phrasing:
-- Transient state: one-off status ("finished X", "checked Y"), calendar events, meeting logistics, debugging observations -- anything whose truth expires within days.
-- Development mechanics: commit hashes, build numbers, and other opaque identifiers; individual commands that were run or one-off tool invocations ("ran pytest", "executed the migration"). If a message contains only such activity, extract nothing from it.
-- Config-discoverable facts: ports, file paths, provider/model names, service settings, versions, environment variables -- anything readable from config or a command. Which tools and platforms the user works with is not config detail; their versions and settings are.
-- In-progress task state: "is investigating X", "is working on Y", "is debugging Z" -- these describe a moment, not the peer.
-- Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle/party, current location, or trip-only decisions. This remains excluded after the trip ends -- durable travel history belongs to the authoritative trip project, not global peer conclusions. This exclusion is specific to travel trips and does not override the HARD RULE allowing durable shipped outcomes from software, home, or other non-travel projects.
-- Travel-persona doctrine: travel-specific preferences or directives about itinerary pacing, route order, maps, navigation, parking, ferries, attractions, food, weather, photographic light, hiking, vehicles, lodging, location sharing, or travel-answer/message behavior. Even when durable, standing, or cross-trip, these belong only in the owning travel persona, not global peer conclusions.
-- Live or country-operational findings: timetables, fares, prices, opening hours, weather, incidents, availability, fuel, parking, road/ferry status, operator behavior, country terminology, source/API mechanics, or other fetched answers. These belong to run/project state or country/domain operating references, not global peer conclusions.
-- Project-scoped process: planning or building activity -- design approaches, phase or workstream strategies, plan/issue-number references, scoping decisions. The shipped outcome may qualify under the HARD RULE above; the road to it never does.
-- Requests and instructions: NEVER record that the peer asked for, requested, or instructed something ("asked to check the calendar", "requested a summary", "told the assistant to fix X"). The act of asking is a moment, not a fact about the peer. If the request's own text states a durable preference, extract the preference -- never the request. A STANDING directive is different: "always X", "never Y", "from now on Z" states a durable rule for how the peer wants things done -- extract it as a preference.
-- The memory and agent system itself: records of writing, editing, or organizing memory ("asked to remember X", "updated the notes file"), and the system's own tools, pool state, architecture, or skill/instruction-file edits. If the content being remembered is a durable fact, extract that fact directly; the act of recording is never a fact.
-- Software capabilities: what a tool, platform, or service can or cannot do ("X doesn't support markdown", API or tool signatures, feature availability). Capabilities change with versions and are never facts about the peer.
-- Procedural or tooling content: instructions, protocols, API names, or mechanics of how the conversation happened, not facts about the peer.
-- Pompous restatement: never inflate a plain preference into an abstraction. If the peer said "I like X," the fact is that the peer likes X -- not an inferred generalization about their philosophy or values.
-- Acknowledgments and deixis: a message whose meaning lives entirely outside its own text -- "yes, do that," "sounds good," "handle it," "sure," "ok go ahead" -- can NEVER yield a self-contained fact, no matter how informative the surrounding context seems. Extract nothing.
-
-If a statement fails any single criterion, do not extract it. When uncertain whether a statement clears the bar, DO NOT extract it -- the raw messages persist and can be mined later, but extracted noise pollutes every future retrieval. Producing ZERO extractions from a message is the expected, correct output for most ordinary conversational turns -- it is not a failure, and it does not mean "try harder."
-
-Extract only what the messages support: never invent specifics, list items, or entities the peer did not state, and never let a general-knowledge leap add detail beyond a direct implication. Never infer a team, employer, or affiliation from workflow evidence, and never coin a named concept or mindset label the peer did not use themselves. State the plain fact, never a hedged guess -- an observation that needs "likely" or "probably" is not yet a fact; leave it out.
+NEVER EXTRACT:
+- Passwords, API keys, tokens, cookies, private keys, recovery codes and other authenticators.
+- Transient state: a status ("finished X", "checked Y"), progress, an in-progress task, a scheduled event, a debugging observation; anything true only for days.
+- Values that change often: counts, run results, run timestamps, version numbers, current numeric settings. The stable name, path or job that holds them may be a pointer.
+- The act of asking, acknowledging or recording: "asked to check", "sounds good", "asked to remember". Extract the content, never the act.
+- Text copied from tool output or a report; extract the finding, not the transcript.
+- Guesses: anything that needs "likely" or "probably"; invented specifics, entities or affiliations; a mindset label the user never used.
+- Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle or party, current location, trip-only decisions. This holds after the trip ends: durable travel history belongs to the authoritative trip project. This exclusion is specific to travel trips and never covers a software, home or other non-travel outcome.
+- Travel-persona doctrine: travel-specific preferences or directives about itinerary pacing, route order, maps, navigation, parking, ferries, attractions, food, weather, photographic light, hiking, vehicles, lodging, location sharing, or travel-answer/message behavior. Even when durable, standing, or cross-trip, these belong only in the owning travel persona.
+- Live or country-operational findings: timetables, fares, prices, opening hours, weather, incidents, availability, fuel, parking, road/ferry status, operator behavior, country terminology, source/API mechanics, or other fetched answers.
 
 <examples>
-These examples are fabricated illustrations of the criteria, not facts about the target peer. Never emit a conclusion whose content comes from an example. Every conclusion must be supported by the <messages> block only. Each example shows message content without its `<message>` wrapper, except where the wrapper is the point.
+Fabricated illustrations of the rules. Never emit a conclusion whose content comes from an example; every conclusion must be supported by the <messages> block only.
 
-EXAMPLES:
+EXTRACT:
+- user: "Do the gap jobs read the right PATCHES.md?" / assistant: "Yes: the Hermes job reads its repo's PATCHES.md and the Honcho job reads its own." / user: "good" → "For the upstream gap jobs, each daily job reads its own repository's PATCHES.md." (assistant-stated, user accepted; cite both messages)
+- "I run the gap reports daily for both forks so I know what a merge costs" → "The user runs daily upstream-gap reports for the Hermes and Honcho forks to judge what a merge costs."
+- "from now on a Honcho answer that misses its wait attaches on the next turn, even an 'ok'" → "For Hermes lane recall, a Honcho answer that misses its first-turn wait attaches on the next message, trivial or not." (a ruling for a stream of work)
+- "the media server is live on my homelab now, everything streams from there" → "The user runs a media server on their homelab that handles their streaming."
+- "My sister Maya just moved to Lisbon" → "The user's sister, Maya, lives in Lisbon."
+- "the accountant files the quarterly VAT return, I only send her the invoices" → "For taxes, the user's accountant files the quarterly VAT return; the user sends her the invoices."
+- "from now on, always run the test suite before telling me something is done" → "The user requires the test suite to be run before work is declared done."
+- "I always travel with my wife; on own-car trips I use my BMW X5" → "The user has a wife." (only the cross-domain fact; travel-companion and vehicle doctrine belongs to the travel persona)
 
-Positive -- clears all four criteria:
-- "I've been doing intermittent fasting for about 8 months now, it works well for me" → EXPLICIT: "the user has practiced intermittent fasting for about 8 months and finds it effective"
-- "I really don't like when tools make me confirm twice, once is enough" → EXPLICIT: "the user prefers a single confirmation step from tools, not double confirmation"
-- "My sister Maya just moved to Lisbon" → EXPLICIT: "the user's sister, Maya, lives in Lisbon"
-- "the media server is live on my homelab now, everything streams from there" → EXPLICIT: "the user runs a media server on their homelab that handles their streaming" (shipped outcome -- extractable under the HARD RULE)
-- "python3 is my preferred interpreter for scripting" → EXPLICIT: "the user prefers python3 as their scripting interpreter" (a durable preference -- prose that merely starts with a command word is not a command)
-- "I do everything on macOS in zsh and tmux, and Postgres is my database" → EXPLICIT: "the user works on macOS with zsh and tmux and uses Postgres as their database" (the tools the user works with every day are a durable circumstance)
-- "from now on, always run the test suite before telling me something is done" → EXPLICIT: "the user requires the test suite to be run before work is declared done" (a standing directive -- a durable rule, not a one-off request)
-
-Negative -- extract nothing, explicit: [] is the correct output:
-- "yes, go ahead and do that" → explicit: [] (deixis -- meaning lives outside the text)
-- "the server's running on port 8080 right now" → explicit: [] (config-discoverable, transient)
-- "Postgres 16 runs on port 5432 with shared_buffers at 4GB" → explicit: [] (versions, ports, and settings belong in config)
-- "just finished debugging the auth bug, took forever" → explicit: [] (transient task state)
-- "made a commit with hash 5e090e8, CI is green" → explicit: [] (development mechanics -- opaque identifier plus one-off status)
-- "phase 2 of the intake plan is done, phase 3 will extend the schema" → explicit: [] (project-scoped process -- the plan's road, not its shipped outcome)
-- "We visited Brandenburg Gate and skipped Berlin Zoo" → explicit: [] (completed trip-instance history belongs to the retained trip project)
-- "Take the 14:20 ferry; the road is closed and this restaurant closes at 21:00" → explicit: [] (live execution findings expire outside global memory)
-- "Norway's operator uses this API field and the current fare is NOK 735" → explicit: [] (country/source mechanics and a fetched answer belong outside global conclusions)
-- "We skipped the museum today. On every trip, I prefer renowned local specialties" → explicit: [] (the visit is trip state and the standing food preference belongs to the travel persona)
-- "For flexible base-camp travel days, prioritize forecast-weighted experience quality over route efficiency and accept reasonable backtracking" → explicit: [] (weather-first route doctrine belongs to the travel persona)
-- "I do not want guided hikes included" → explicit: [] (hiking doctrine belongs to the travel persona)
-- "Choose parking by proximity to the actual planned attractions, not generic venue labels" → explicit: [] (travel parking doctrine belongs to the travel persona)
-- "I always travel with my wife; on own-car trips I use my BMW X5" → EXPLICIT: "the user has a wife" (retain only the cross-domain relationship; travel-companion and vehicle doctrine belongs to the travel persona)
-- "check my calendar for tomorrow and move the 9am if it conflicts" → explicit: [] (a request -- records a moment, not the user)
-- "per the steward protocol, run search-before-create first" → explicit: [] (procedural/tooling content, not a fact about the user)
-- "remember this: I want summaries kept short" → EXPLICIT: "the user wants summaries kept short" (extract the preference itself -- NEVER "the user asked to have a preference recorded")
-- "the user balances agent responsiveness with data integrity" is NOT how to record "I like when things load fast but don't want to lose data" → EXPLICIT: "the user prefers fast loading but not at the cost of losing data" (plain form, not the pompous rewrite)
-- `<message target="false" peer="assistant">I read the config file and found the port is 8080</message>` → explicit: [] (another peer acted; a non-target message is context, never an extraction target)
+NOTHING, explicit: [] is the correct output:
+- "yes, go ahead and do that" (the act of agreeing)
+- "the server's running on port 8080 right now" (a current value)
+- "just finished debugging the auth bug, took forever" (status)
+- "We visited Brandenburg Gate and skipped Berlin Zoo" (trip instance)
+- "We skipped the museum today. On every trip, I prefer renowned local specialties" (the visit is trip state and the standing food preference belongs to the travel persona)
+- "For flexible base-camp travel days, prioritize forecast-weighted experience quality over route efficiency" (travel persona)
+- "I do not want guided hikes included" (travel persona)
+- "Choose parking by proximity to the actual planned attractions, not generic venue labels" (travel persona)
+- "Take the 14:20 ferry; the road is closed and this restaurant closes at 21:00" (live findings)
+- "Norway's operator uses this API field and the current fare is NOK 735" (country mechanics and a fetched answer)
+- `<message target="false" peer="assistant">I read the config file and found the port is 8080</message>` with no user reply (a value nobody kept)
 </examples>
 
-OUTPUT DISCIPLINE: fewer, better observations beat many marginal ones. An empty extraction is a correct, common, and expected result -- never pad the output to justify the call.
+OUTPUT:
+- Small talk, acknowledgements and pure status updates yield nothing.
+- A working discussion usually yields one to a few conclusions; extract each one that qualifies, never pad and never drop a qualifying one to stay short.
 
 {admission_section}
 

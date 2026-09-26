@@ -259,8 +259,10 @@ The Dialectic answers questions about peers by strategically gathering context f
 - **Reasoning levels**: 5 tiers — `minimal`, `low`, `medium`, `high`, `max` — each with its own model config (see `DialecticLevelSettings` in `src/config.py`).
 - **Output**: Natural language response grounded in gathered context. Supports SSE streaming.
 - **Entry point**: `src/dialectic/chat.py` → `agentic_chat()` / `agentic_chat_stream()` → `DialecticAgent` (in `src/dialectic/core.py`).
-- **Automatic mode** (`DialecticOptions.automatic`, `src/dialectic/automatic.py`): one server-side prefetch on the caller's `search_text` (conclusions minus the ids the caller already holds, past-chat excerpts from other sessions with each thread's summary), one model call with no tools and no peer card, a short answer or `NONE`. Never streams. The Hermes plugin's lane recall calls it.
-  - Each run logs a `dialectic.automatic prefetch` line (conclusions found and kept, known ids, excerpts found, kept and dropped for the excluded session, summaries, timings) and a `dialectic.automatic answer` line, joined to the run's `dialectic.prepare` and `dialectic.answer` lines by `run_id`.
+- **Automatic mode** (`DialecticOptions.automatic`, `src/dialectic/automatic.py`): one server-side prefetch on the caller's `search_text`, one model call with no tools and no peer card, short bullets or `NONE`. Never streams. The Hermes plugin's lane recall calls it.
+  - The search text is searched one thought at a time (lines, then sentences) over past messages, each message ranked at its best distance; the caller's own session and one-line acknowledgements are filtered inside the query. The context is those excerpts with their thread summaries plus the ids the caller already holds as known; conclusions are never prefetched here.
+  - Each run logs `dialectic.automatic prefetch`, `dialectic.automatic excerpts` (rank, session, message ids and distances) and `dialectic.automatic answer`, joined to the run's `dialectic.prepare` and `dialectic.answer` lines by `run_id`.
+- **Per-thought conclusion query** (`per_thought` on the conclusion query): the same thought split, one vector query per thought, each conclusion at its best distance, the distance floor applied per query; logs `documents.query per_thought`.
 
 #### 3. Dreamer (`src/dreamer/`)
 

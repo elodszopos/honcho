@@ -17,6 +17,7 @@ from sqlalchemy.sql.functions import func
 from src import models, schemas
 from src.config import settings
 from src.crud.collection import get_or_create_collection
+from src.crud.hnsw import widen_hnsw_scan
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
@@ -28,6 +29,7 @@ from src.exceptions import (
 )
 from src.utils.filter import apply_filter
 from src.utils.formatting import format_datetime_utc
+from src.utils.segments import split_thoughts
 from src.vector_store import (
     VectorRecord,
     VectorStore,
@@ -431,6 +433,7 @@ async def query_documents(
     max_distance: float | None = None,
     top_k: int = 5,
     embedding: list[float] | None = None,
+    per_thought: bool = False,
 ) -> Sequence[models.Document]:
     """
     Query documents using semantic similarity.
@@ -449,12 +452,26 @@ async def query_documents(
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
         embedding: Optional pre-computed embedding for the query (avoids extra API call if possible)
+        per_thought: Search each thought of the query on its own and rank a document
+            at its best distance
 
     Returns:
         Sequence of matching documents
     """
     if top_k <= 0:
         return []
+
+    if per_thought and _uses_pgvector():
+        return await _query_documents_per_thought(
+            db,
+            workspace_name,
+            query,
+            observer=observer,
+            observed=observed,
+            filters=filters,
+            max_distance=max_distance,
+            top_k=top_k,
+        )
 
     # Use provided embedding or generate one
     if embedding is None:
@@ -526,6 +543,80 @@ async def query_documents(
             document_ids=document_ids,
             filters=filters,
         )
+        for doc in docs:
+            managed_db.expunge(doc)
+        return docs
+
+
+async def embed_thoughts(query: str) -> list[list[float]]:
+    """One embedding per thought of ``query``, in order; empty when the query is blank."""
+    thoughts = split_thoughts(query)
+    if not thoughts:
+        return []
+    embedded = await embedding_client.batch_embed(
+        {str(index): thought for index, thought in enumerate(thoughts)}
+    )
+    return [
+        vectors[0]
+        for _, vectors in sorted(embedded.items(), key=lambda item: int(item[0]))
+        if vectors
+    ]
+
+
+async def _query_documents_per_thought(
+    db: AsyncSession | None,
+    workspace_name: str,
+    query: str,
+    *,
+    observer: str,
+    observed: str,
+    filters: dict[str, Any] | None,
+    max_distance: float | None,
+    top_k: int,
+) -> list[models.Document]:
+    """Each thought of ``query`` searched on its own; a document ranks at its best distance."""
+    embeddings = await embed_thoughts(query)
+    if not embeddings:
+        return []
+
+    async def _run(session: AsyncSession) -> list[models.Document]:
+        await widen_hnsw_scan(session)
+        best: dict[str, float] = {}
+        rows: dict[str, models.Document] = {}
+        for vector in embeddings:
+            for doc in await _query_documents_pgvector(
+                session,
+                workspace_name,
+                observer,
+                observed,
+                vector,
+                filters,
+                max_distance,
+                top_k,
+            ):
+                distance = float(doc.distance)
+                if doc.id not in best or distance < best[doc.id]:
+                    best[doc.id] = distance
+                    rows[doc.id] = doc
+        ranked = sorted(rows.values(), key=lambda doc: best[doc.id])[:top_k]
+        for doc in ranked:
+            doc.distance = best[doc.id]
+        logger.info(
+            "documents.query per_thought: workspace=%s observer=%s observed=%s thoughts=%d max_distance=%s candidates=%d kept=%d",
+            workspace_name,
+            observer,
+            observed,
+            len(embeddings),
+            max_distance,
+            len(rows),
+            len(ranked),
+        )
+        return ranked
+
+    if db is not None:
+        return await _run(db)
+    async with tracked_db("query_documents.per_thought", read_only=True) as managed_db:
+        docs = await _run(managed_db)
         for doc in docs:
             managed_db.expunge(doc)
         return docs
@@ -1197,16 +1288,24 @@ async def _validate_admission_references(
         if obs.source_message_ids:
             conditions = [
                 models.Message.workspace_name == workspace_name,
-                models.Message.peer_name == obs.observed_id,
                 models.Message.id.in_(obs.source_message_ids),
             ]
             if obs.session_id is not None:
                 conditions.append(models.Message.session_name == obs.session_id)
-            result = await db.execute(select(models.Message.id).where(*conditions))
-            found = set(result.scalars().all())
-            if set(obs.source_message_ids) - found:
+            rows = (
+                await db.execute(
+                    select(models.Message.id, models.Message.peer_name).where(
+                        *conditions
+                    )
+                )
+            ).all()
+            if set(obs.source_message_ids) - {row_id for row_id, _ in rows}:
                 raise ValidationException(
-                    "source_message_ids contain missing, wrong-peer, or out-of-scope messages"
+                    "source_message_ids contain missing or out-of-scope messages"
+                )
+            if all(peer_name != obs.observed_id for _, peer_name in rows):
+                raise ValidationException(
+                    "source_message_ids cite no message authored by the observed peer"
                 )
 
 

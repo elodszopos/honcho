@@ -251,7 +251,7 @@ def test_the_extraction_examples_are_fenced_and_disclaimed():
     assert "Never emit a conclusion whose content comes from an example" in prompt
     assert (
         prompt.index("<examples>")
-        < prompt.index("Positive -- clears all four criteria:")
+        < prompt.index("\nEXTRACT:\n")
         < prompt.index("</examples>")
     )
 

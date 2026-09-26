@@ -685,7 +685,7 @@ def test_chat_automatic_forwards_options(
     assert automatic.exclude_conclusion_ids == ["abc"]
     assert automatic.exclude_session_id == "thread-1"
     assert automatic.excerpt_limit == 3
-    assert automatic.conclusion_limit == 10
+    assert automatic.max_answer_chars == 900
 
 
 def test_chat_without_automatic_passes_none(

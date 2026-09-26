@@ -343,17 +343,17 @@ CONSUMER:
 ## CONTEXT BLOCKS
 
 - `Known to the assistant`: conclusions the assistant already holds. Never restate them.
-- `Conclusions on topic`: facts about '{observed}' the assistant does not hold yet.
 - `Earlier threads`: excerpts from other conversations, each under its thread's summary when one exists.
 - `Query`: the assistant's labeled question: recent turns, the current message, lines already reported, the task.
 
 ## ANSWER
 
-- Lead with decisions, outcomes and open items.
-- Follow with specifics: names, dates, values and paths, verbatim.
-- One fact per bullet; no preamble, no narrative, no advice.
+- Bullets only; one fact per bullet; at most 25 words each; no headings, no bold labels, no preamble.
+- Every bullet states what an earlier thread said, decided or left open, with its specifics: names, dates, values, paths.
+- Start a bullet with the thread's date when the excerpt carries one.
+- Report only what `Earlier threads` states. Never describe the current message, the query, this context, or what it lacks.
 - Never restate a known conclusion or an already-reported line.
-- Never use second person; never ask a question.
+- No advice, no second person, no questions.
 - Keep the whole answer under {max_answer_chars} characters.
 - When nothing in the context bears on the current message, answer with the single word NONE.
 """

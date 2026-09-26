@@ -1,5 +1,6 @@
 """The automatic dialectic answers from one prefetched block with no tools."""
 
+import json
 import logging
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -18,8 +19,8 @@ from src.utils.evidence import EvidenceAccumulator
 KNOWN = "User has a Google billing account"
 ON_TOPIC = "User monitors Reddit with scheduled digests"
 OTHER = "User reviews pull requests first thing in the morning"
-EARLIER_MESSAGE = "the reddit digest job runs at 9"
-CURRENT_MESSAGE = "current thread text about reddit"
+EARLIER_MESSAGE = "the reddit digest job runs at 9 every morning now"
+CURRENT_MESSAGE = "current thread text about the reddit digest job"
 EARLIER_SUMMARY = "Reviewed the reddit digest job and moved it to 9."
 
 
@@ -130,7 +131,6 @@ def make_agent(automatic_data: Any, **overrides: Any) -> AutomaticDialecticAgent
         "search_text": "reddit digest",
         "exclude_conclusion_ids": [known.id],
         "exclude_session_id": current.name,
-        "conclusion_limit": 5,
         "excerpt_limit": 5,
     }
     options.update(overrides.pop("options", {}))
@@ -164,7 +164,24 @@ class TestAutomaticAgent:
         assert kwargs["tools"] == []
         assert kwargs["tool_choice"] is None
 
-    async def test_prefetch_block_carries_known_on_topic_and_earlier_threads(
+    async def test_excerpt_trace_records_ids_sessions_and_distances(
+        self, automatic_data: Any, caplog: pytest.LogCaptureFixture
+    ):
+        _workspace, _peer, earlier, _current, _documents = automatic_data
+        with caplog.at_level(logging.INFO, logger="src.dialectic.automatic"):
+            await run_answer(make_agent(automatic_data))
+        lines = [
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith("dialectic.automatic excerpts:")
+        ]
+        assert len(lines) == 1
+        hits = json.loads(lines[0].split("hits=", 1)[1])
+        assert [hit["session"] for hit in hits] == [earlier.name]
+        assert hits[0]["rank"] == 1
+        assert hits[0]["ids"] and hits[0]["distances"][0] is not None
+
+    async def test_prefetch_block_carries_known_and_earlier_threads_only(
         self, automatic_data: Any
     ):
         agent = make_agent(automatic_data)
@@ -172,15 +189,68 @@ class TestAutomaticAgent:
 
         prompt = agent.messages[-1]["content"]
         known_block = prompt.split("## Known to the assistant")[1].split("##")[0]
-        on_topic_block = prompt.split("## Conclusions on topic")[1].split("##")[0]
         threads_block = prompt.split("## Earlier threads")[1]
 
         assert KNOWN in known_block
-        assert ON_TOPIC in on_topic_block and OTHER in on_topic_block
-        assert KNOWN not in on_topic_block
+        assert "## Conclusions on topic" not in prompt
+        assert ON_TOPIC not in prompt and OTHER not in prompt
         assert EARLIER_MESSAGE in threads_block
         assert f"Summary: {EARLIER_SUMMARY}" in threads_block
         assert CURRENT_MESSAGE not in prompt
+
+    async def test_each_thought_of_the_search_text_is_searched(
+        self, automatic_data: Any, caplog: pytest.LogCaptureFixture
+    ):
+        caplog.set_level(logging.INFO, logger="src.dialectic.automatic")
+        agent = make_agent(
+            automatic_data,
+            options={
+                "search_text": "what about the reddit digest?\nand the morning job timing?"
+            },
+        )
+        await run_answer(agent)
+
+        line = next(
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("dialectic.automatic prefetch:")
+        )
+        assert "thoughts=2" in line
+        assert EARLIER_MESSAGE in agent.messages[-1]["content"]
+
+    async def test_short_messages_never_become_excerpts(
+        self, automatic_data: Any, db_session: AsyncSession
+    ):
+        workspace, peer, earlier, _current, _documents = automatic_data
+        short = models.Message(
+            workspace_name=workspace.name,
+            session_name=earlier.name,
+            peer_name=peer.name,
+            content="ok reddit",
+            seq_in_session=2,
+            token_count=2,
+        )
+        db_session.add(short)
+        await db_session.flush()
+        db_session.add(
+            models.MessageEmbedding(
+                content=short.content,
+                message_id=short.public_id,
+                workspace_name=workspace.name,
+                session_name=earlier.name,
+                peer_name=peer.name,
+                sync_state="synced",
+                embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
+            )
+        )
+        await db_session.commit()
+
+        agent = make_agent(automatic_data)
+        await run_answer(agent)
+
+        threads_block = agent.messages[-1]["content"].split("## Earlier threads")[1]
+        assert EARLIER_MESSAGE in threads_block
+        assert "- ok reddit" not in threads_block
 
     async def test_system_prompt_is_the_automatic_one(self, automatic_data: Any):
         agent = make_agent(automatic_data, options={"max_answer_chars": 450})
@@ -196,18 +266,13 @@ class TestAutomaticAgent:
 
         assert answer == ""
 
-    async def test_evidence_records_on_topic_conclusions_and_excerpt_messages(
+    async def test_evidence_records_excerpt_messages_and_no_conclusions(
         self, automatic_data: Any
     ):
-        *_, documents = automatic_data
         evidence = EvidenceAccumulator()
         await run_answer(make_agent(automatic_data, evidence=evidence))
 
-        known = next(d for d in documents if d.content == KNOWN)
-        assert known.id not in evidence.conclusions
-        assert {d.id for d in documents if d.content != KNOWN} <= set(
-            evidence.conclusions
-        )
+        assert not evidence.conclusions
         assert evidence.build().messages
 
     async def test_prefetch_and_answer_are_logged_with_their_counts(
@@ -230,26 +295,20 @@ class TestAutomaticAgent:
         assert prefetch, "no prefetch line"
         line = prefetch[0]
         for fragment in (
-            "excluded_ids=1",
+            "thoughts=1",
             "known=1",
-            "conclusions_found=3",
-            "conclusions_kept=2",
-            "excerpts_kept=1",
+            "excerpts=1",
             "summaries=1",
             "exclude_session=True",
         ):
             assert fragment in line, f"{fragment} missing from {line}"
-        assert "excerpts_from_excluded_session=" in line
         assert "outcome=answer" in answers[0]
         assert "outcome=none chars=0" in answers[1]
 
-    async def test_zero_limits_prefetch_nothing_but_known(self, automatic_data: Any):
-        agent = make_agent(
-            automatic_data, options={"conclusion_limit": 0, "excerpt_limit": 0}
-        )
+    async def test_zero_excerpts_prefetch_nothing_but_known(self, automatic_data: Any):
+        agent = make_agent(automatic_data, options={"excerpt_limit": 0})
         await run_answer(agent)
 
         prompt = agent.messages[-1]["content"]
         assert "## Known to the assistant" in prompt
-        assert "## Conclusions on topic" not in prompt
         assert "## Earlier threads" not in prompt

@@ -58,6 +58,27 @@ describe('Conclusion query distance', () => {
     expect(distances).toEqual(ranked)
   })
 
+  test('a per-thought query ranks by best distance', async () => {
+    const peer = await client.peer('thought-query-peer', { metadata: {} })
+    const session = await client.session('thought-query-session', { metadata: {} })
+    await peer.conclusions.create([
+      operatorConclusion('User loves Italian cuisine, especially pasta', session),
+      operatorConclusion('User runs along the river every morning', session),
+    ])
+
+    const results = await peer.conclusions.query(
+      'what food do they like?\nand where do they run?',
+      2,
+      undefined,
+      undefined,
+      true
+    )
+
+    expect(results.length).toBe(2)
+    const distances = results.map((conclusion) => conclusion.distance as number)
+    expect(distances).toEqual([...distances].sort((a, b) => a - b))
+  })
+
   test('listed conclusions carry no distance', async () => {
     const peer = await client.peer('distance-list-peer', { metadata: {} })
     const session = await client.session('distance-list-session', { metadata: {} })

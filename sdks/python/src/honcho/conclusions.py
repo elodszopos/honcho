@@ -557,6 +557,7 @@ class ConclusionsView:
         top_k: int = 10,
         distance: float | None = None,
         *,
+        per_thought: bool = False,
         filters: dict[str, Any] | None = None,
     ) -> list[Conclusion]:
         """
@@ -566,6 +567,7 @@ class ConclusionsView:
             query: The search query string
             top_k: Maximum number of results to return
             distance: Maximum cosine distance threshold (0.0-1.0)
+            per_thought: Search each thought of the query on its own, rank at best distance
             filters: Optional dictionary of additional filter criteria, merged
                 with this scope's observer/observed. Supports the same operators
                 as the list endpoint — e.g. ``{"level": "deductive"}`` to search
@@ -590,6 +592,8 @@ class ConclusionsView:
         }
         if distance is not None:
             body["distance"] = distance
+        if per_thought:
+            body["per_thought"] = True
 
         data = self._honcho._http.post(
             routes.conclusions_query(self.workspace_id),

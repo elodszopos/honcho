@@ -573,7 +573,6 @@ class AutomaticChatParams(BaseModel):
     search_text: str = Field(min_length=1, max_length=10000)
     exclude_conclusion_ids: list[str] = Field(default_factory=list, max_length=200)
     exclude_session_id: str | None = None
-    conclusion_limit: int = Field(default=10, ge=0, le=50)
     excerpt_limit: int = Field(default=5, ge=0, le=20)
     max_answer_chars: int = Field(default=900, ge=100, le=5000)
 

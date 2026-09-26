@@ -53,7 +53,7 @@ def test_minimal_deriver_prompt_explains_message_tags() -> None:
 
     assert 'target="true"' in prompt
     assert 'target="false"' in prompt
-    assert "few or no conclusions" in prompt
+    assert 'A batch with no `target="true"` message yields nothing' in prompt
 
 
 def test_minimal_deriver_prompt_includes_custom_instructions_when_present() -> None:
@@ -94,16 +94,44 @@ def test_minimal_deriver_prompt_separates_source_messages_from_admission_cases()
     assert "candidate-1: Alice likes tea." in prompt
 
 
-def test_owner_gate_keeps_pii_and_does_not_override_hard_rule() -> None:
+def test_conclusions_cover_topic_facts_decisions_pointers_and_the_user() -> None:
+    prompt = minimal_deriver_prompt(peer_id="alice", messages="alice: hello")
+
+    assert "WHAT A CONCLUSION IS, extract every one that qualifies:" in prompt
+    assert "A fact the conversation established about a topic" in prompt
+    assert "A decision, ruling or requirement for a stream of work" in prompt
+    assert "A pointer: where something lives" in prompt
+    assert "The user's relationship to a topic" in prompt
+    assert "A fact about the user: a preference, trait, relationship or circumstance" in prompt
+    assert "Any topic qualifies: work, projects, home, health, money, people, hobbies." in prompt
+    assert "Name the topic inside the conclusion" in prompt
+
+
+def test_conclusions_from_the_other_peer_count_once_the_user_accepted_them() -> None:
     prompt = minimal_deriver_prompt(
         peer_id="alice",
         messages="alice: hello",
+        existing_conclusions="(none)",
+        candidate_observation="case",
     )
 
-    assert "OWNER GATE:" in prompt
-    assert "Never extract them." in prompt
-    assert "Never reject them merely because they are PII." in prompt
-    assert "except a shipped outcome the HARD RULE below admits." in prompt
+    assert "A conclusion may come from any peer's message." in prompt
+    assert "agreed, built on it, or continued without contradicting it" in prompt
+    assert "at least one cited message is the user's" in prompt
+    assert "assistant-stated, user accepted; cite both messages" in prompt
+
+
+def test_never_extract_names_secrets_transient_state_and_volatile_values() -> None:
+    prompt = minimal_deriver_prompt(peer_id="alice", messages="alice: hello")
+
+    assert "NEVER EXTRACT:" in prompt
+    assert "Passwords, API keys, tokens" in prompt
+    assert "Transient state: a status" in prompt
+    assert "Values that change often" in prompt
+    assert "The stable name, path or job that holds them may be a pointer." in prompt
+    assert "The act of asking, acknowledging or recording" in prompt
+    assert "OWNER GATE" not in prompt
+    assert "ZERO extractions" not in prompt
 
 
 def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> None:

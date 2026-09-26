@@ -14,7 +14,6 @@ OPTIONS: dict[str, Any] = {
     "search_text": "reminder job | fire at 9",
     "exclude_conclusion_ids": ["c-1", "c-2"],
     "exclude_session_id": "thread-1",
-    "conclusion_limit": 7,
     "excerpt_limit": 3,
     "max_answer_chars": 600,
 }
@@ -69,7 +68,7 @@ def test_chat_without_automatic_forwards_none(
     [
         {"search_text": "reminder job", "unknown_field": 1},
         {"search_text": ""},
-        {"search_text": "reminder job", "conclusion_limit": 51},
+        {"search_text": "reminder job", "excerpt_limit": 21},
         {"search_text": "reminder job", "exclude_conclusion_ids": ["c"] * 201},
     ],
 )

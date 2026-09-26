@@ -749,6 +749,13 @@ class ConclusionQuery(BaseModel):
         le=1.0,
         description="Maximum cosine distance threshold for results",
     )
+    per_thought: bool = Field(
+        default=False,
+        description=(
+            "Search each thought of the query on its own and rank a conclusion at its "
+            "best distance"
+        ),
+    )
     filters: dict[str, Any] | None = Field(
         default=None,
         description="Additional filters to apply",
@@ -1051,9 +1058,6 @@ class AutomaticChatOptions(BaseModel):
     exclude_session_id: str | None = Field(
         None,
         description="Session whose messages never appear as excerpts; usually the chat being answered.",
-    )
-    conclusion_limit: int = Field(
-        default=10, ge=0, le=50, description="Conclusions prefetched on the search text"
     )
     excerpt_limit: int = Field(
         default=5,

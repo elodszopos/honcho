@@ -290,7 +290,8 @@ async def process_representation_tasks_batch(
     )
 
     message_ids = [m.id for m in messages if m.peer_name == observed]
-    eligible_message_ids = set(message_ids)
+    target_message_ids = set(message_ids)
+    eligible_message_ids = {m.id for m in messages}
     observations = Representation()
     successful_observer_count = 0
     admission_response = None
@@ -441,11 +442,14 @@ async def process_representation_tasks_batch(
             observer, candidate, candidate_ids = case_context[
                 decision.admission_case_id
             ]
-            if len(set(decision.source_message_ids)) != len(
-                decision.source_message_ids
-            ) or not set(decision.source_message_ids).issubset(eligible_message_ids):
+            cited = set(decision.source_message_ids)
+            if (
+                len(cited) != len(decision.source_message_ids)
+                or not cited.issubset(eligible_message_ids)
+                or not cited & target_message_ids
+            ):
                 raise ValueError(
-                    "Admission agent cited duplicate, non-prompt, or wrong-peer message IDs"
+                    "Admission agent cited duplicate or non-prompt message IDs, or none from the target peer"
                 )
             if decision.action == "enrich" and decision.target_id not in candidate_ids:
                 raise ValueError(

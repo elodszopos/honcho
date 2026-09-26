@@ -168,13 +168,13 @@ def test_raw_create_without_agent_admission_is_rejected(
     assert response.status_code == 422
 
 
-def test_rejects_source_message_authored_by_wrong_peer(
+def test_rejects_sources_without_an_observed_peer_message(
     client: TestClient,
     conclusion_scope: tuple[Workspace, Peer, Peer],
     conclusion_messages: tuple[models.Session, models.Message, models.Message],
 ):
     workspace, observer, observed = conclusion_scope
-    session, _, wrong_peer_message = conclusion_messages
+    session, _, other_peer_message = conclusion_messages
     payload = _admission_payload(
         content="The user prefers dark mode",
         observer=observer.name,
@@ -182,7 +182,7 @@ def test_rejects_source_message_authored_by_wrong_peer(
         searched_ids=[],
     )
     payload["session_id"] = session.name
-    payload["source_message_ids"] = [wrong_peer_message.id]
+    payload["source_message_ids"] = [other_peer_message.id]
 
     response = client.post(
         f"/v3/workspaces/{workspace.name}/conclusions",
@@ -190,7 +190,31 @@ def test_rejects_source_message_authored_by_wrong_peer(
     )
 
     assert response.status_code == 422
-    assert "wrong-peer" in response.text
+    assert "no message authored by the observed peer" in response.text
+
+
+def test_accepts_another_peers_message_beside_the_observed_peers(
+    client: TestClient,
+    conclusion_scope: tuple[Workspace, Peer, Peer],
+    conclusion_messages: tuple[models.Session, models.Message, models.Message],
+):
+    workspace, observer, observed = conclusion_scope
+    session, observed_message, other_peer_message = conclusion_messages
+    payload = _admission_payload(
+        content="The user prefers dark mode",
+        observer=observer.name,
+        observed=observed.name,
+        searched_ids=[],
+    )
+    payload["session_id"] = session.name
+    payload["source_message_ids"] = [other_peer_message.id, observed_message.id]
+
+    response = client.post(
+        f"/v3/workspaces/{workspace.name}/conclusions",
+        json={"conclusions": [payload]},
+    )
+
+    assert response.status_code == 201
 
 
 @pytest.fixture

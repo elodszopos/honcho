@@ -52,6 +52,21 @@ async def test_query_results_carry_distance_closest_first(
     _assert_ranked_by_distance(results)
 
 
+def test_per_thought_query_ranks_by_best_distance(honcho_sync_test_client: Honcho):
+    observer = honcho_sync_test_client.peer(id="thought-observer")
+    target = honcho_sync_test_client.peer(id="thought-target")
+    session = honcho_sync_test_client.session(id="thought-session")
+    session.add_messages([observer.message("hello"), target.message("hi there")])
+    scope = observer.conclusions_of(target)
+    scope.create([_operator_conclusion(content, session.id) for content in CONTENTS])
+
+    results = scope.query(
+        "what food do they like?\nand where do they run?", top_k=3, per_thought=True
+    )
+
+    _assert_ranked_by_distance(results)
+
+
 def test_listed_conclusions_carry_no_distance(honcho_sync_test_client: Honcho):
     observer = honcho_sync_test_client.peer(id="distance-list-observer")
     target = honcho_sync_test_client.peer(id="distance-list-target")

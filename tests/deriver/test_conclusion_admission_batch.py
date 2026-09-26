@@ -277,7 +277,7 @@ async def test_invalid_late_admission_fails_before_atomic_write() -> None:
             "src.deriver.deriver.RepresentationManager.save_representation",
             new=AsyncMock(return_value=2),
         ) as save,
-        pytest.raises(ValueError, match="wrong-peer message IDs"),
+        pytest.raises(ValueError, match="none from the target peer"),
     ):
         await process_representation_tasks_batch(
             messages=messages,
@@ -289,3 +289,66 @@ async def test_invalid_late_admission_fails_before_atomic_write() -> None:
         )
 
     save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admission_accepts_the_other_peers_message_beside_the_users() -> None:
+    messages = [
+        _message(21, "alice", "do the gap jobs read the right PATCHES.md?"),
+        _message(22, "bob", "Yes, each job reads its own repository's PATCHES.md."),
+        _message(23, "alice", "good"),
+    ]
+    extraction = _llm_response(
+        ExtractedRepresentation(
+            explicit=[
+                ExtractedObservation(
+                    content="For the upstream gap jobs, each job reads its own repository's PATCHES.md"
+                ),
+            ]
+        ),
+        input_tokens=100,
+        output_tokens=20,
+    )
+    admission = _llm_response(
+        AdmissionRepresentation(
+            explicit=[
+                AdmissionDecision(
+                    admission_case_id=0,
+                    content="For the upstream gap jobs, each job reads its own repository's PATCHES.md",
+                    action="create",
+                    reason_for_entry="A fact the conversation established about the gap jobs",
+                    source_message_ids=[22, 23],
+                ),
+            ]
+        ),
+        input_tokens=60,
+        output_tokens=15,
+    )
+
+    with (
+        patch(
+            "src.deriver.deriver.honcho_llm_call",
+            new=AsyncMock(side_effect=[extraction, admission]),
+        ),
+        patch(
+            "src.deriver.deriver.RepresentationManager.get_working_representation",
+            new=AsyncMock(return_value=Representation()),
+        ),
+        patch(
+            "src.deriver.deriver.RepresentationManager.save_representation",
+            new=AsyncMock(return_value=1),
+        ) as save,
+        patch("src.deriver.deriver.emit"),
+    ):
+        await process_representation_tasks_batch(
+            messages=messages,
+            message_level_configuration=_configuration(),
+            observers=["bob"],
+            observed="alice",
+            queue_item_message_ids=[21, 23],
+            session_id="canonical-session-1",
+        )
+
+    save.assert_awaited_once()
+    admitted = save.await_args.args[0]
+    assert admitted.explicit[0].message_ids == [22, 23]
