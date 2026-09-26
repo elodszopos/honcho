@@ -10,9 +10,10 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
 
-from src import crud, models
+from src import crud, models, schemas
 from src.config import ReasoningLevel
 from src.dependencies import tracked_db
+from src.dialectic.automatic import AutomaticDialecticAgent
 from src.dialectic.core import DialecticAgent
 from src.dialectic.workspace import WorkspaceDialecticAgent
 from src.exceptions import ValidationException
@@ -57,6 +58,7 @@ async def agentic_chat(
     session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
     evidence: EvidenceAccumulator | None = None,
+    automatic: schemas.AutomaticChatOptions | None = None,
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -71,6 +73,8 @@ async def agentic_chat(
         session_allowlist: Optional session allowlist restricting all recall
         response_model: Optional Pydantic model the answer must conform to.
             When set, the returned string is JSON matching the model's schema.
+        automatic: When set, answer in automatic mode: one prefetch on its
+            search text, one model call with no tools, no peer card.
 
     Returns:
         The synthesized answer string
@@ -103,7 +107,7 @@ async def agentic_chat(
 
         observer_peer_card = None
         observed_peer_card = None
-        if configuration.peer_card.use:
+        if configuration.peer_card.use and automatic is None:
             observer_peer_card = await crud.get_peer_card(
                 db, workspace_name, observer=observer, observed=observer
             )
@@ -113,18 +117,32 @@ async def agentic_chat(
                 )
     # DB session closed — agent runs without holding a connection
 
-    agent = DialecticAgent(
-        workspace_name=workspace_name,
-        session_name=session_name,
-        session_id=session_id,
-        observer=observer,
-        observed=observed,
-        observer_peer_card=observer_peer_card,
-        observed_peer_card=observed_peer_card,
-        reasoning_level=reasoning_level,
-        session_allowlist=session_allowlist,
-        evidence=evidence,
-    )
+    agent: DialecticAgent
+    if automatic is not None:
+        agent = AutomaticDialecticAgent(
+            workspace_name=workspace_name,
+            session_name=session_name,
+            session_id=session_id,
+            observer=observer,
+            observed=observed,
+            options=automatic,
+            reasoning_level=reasoning_level,
+            session_allowlist=session_allowlist,
+            evidence=evidence,
+        )
+    else:
+        agent = DialecticAgent(
+            workspace_name=workspace_name,
+            session_name=session_name,
+            session_id=session_id,
+            observer=observer,
+            observed=observed,
+            observer_peer_card=observer_peer_card,
+            observed_peer_card=observed_peer_card,
+            reasoning_level=reasoning_level,
+            session_allowlist=session_allowlist,
+            evidence=evidence,
+        )
 
     return await agent.answer(query, response_model=response_model)
 

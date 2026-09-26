@@ -240,6 +240,7 @@ class Conclusion:
         removal: Why this conclusion was retired, or None while it is live.
         created_at: Timestamp for when the conclusion was created
         deleted_at: When it was retired, or None while it is live
+        distance: Cosine distance from a semantic query, lower is closer; None elsewhere
     """
 
     id: str
@@ -254,6 +255,7 @@ class Conclusion:
     times_derived: int = 1
     created_at: datetime.datetime
     deleted_at: datetime.datetime | None = None
+    distance: float | None = None
 
     def __init__(
         self,
@@ -269,6 +271,7 @@ class Conclusion:
         source_ids: list[str] | None = None,
         times_derived: int = 1,
         deleted_at: datetime.datetime | None = None,
+        distance: float | None = None,
     ) -> None:
         self.id = id
         self.content = content
@@ -282,6 +285,7 @@ class Conclusion:
         self.times_derived = times_derived
         self.created_at = created_at
         self.deleted_at = deleted_at
+        self.distance = distance
 
     @classmethod
     def from_api_response(cls, data: ConclusionResponse) -> "Conclusion":
@@ -299,6 +303,7 @@ class Conclusion:
             times_derived=data.times_derived,
             created_at=data.created_at,
             deleted_at=data.deleted_at,
+            distance=data.distance,
         )
 
     def __repr__(self) -> str:

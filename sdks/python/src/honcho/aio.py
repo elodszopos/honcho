@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 from pydantic import BaseModel, ConfigDict, Field, validate_call
 
 from .api_types import (
+    AutomaticChatParams,
     ConclusionLineageResponse,
     ConclusionRemovalParams,
     ConclusionResponse,
@@ -90,6 +91,7 @@ from .peer import (
     Peer,
     TResponseFormat,
     parse_chat_response,
+    serialize_automatic,
     serialize_response_format,
 )
 from .scope import Scope
@@ -840,6 +842,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         response_format: type[TResponseFormat],
         include_evidence: Literal[False] = False,
         timeout: float | None = None,
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> TResponseFormat | None: ...
 
     @overload
@@ -856,6 +859,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         response_format: type[TResponseFormat],
         include_evidence: Literal[True],
         timeout: float | None = None,
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> ChatResponse[TResponseFormat]: ...
 
     @overload
@@ -872,6 +876,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         response_format: dict[str, Any] | None = None,
         include_evidence: Literal[True],
         timeout: float | None = None,
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> ChatResponse[str]: ...
 
     @overload
@@ -888,6 +893,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         response_format: dict[str, Any] | None = None,
         include_evidence: Literal[False] = False,
         timeout: float | None = None,
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> str | None: ...
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -906,6 +912,7 @@ class PeerAio(AsyncMetadataConfigMixin):
         timeout: float | None = Field(
             None, gt=0, description="Timeout in seconds for this chat request"
         ),
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> ChatResponse[Any] | BaseModel | str | None:
         """Query the peer's representation asynchronously.
 
@@ -937,6 +944,8 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["response_format"] = response_format_schema
         if include_evidence:
             body["include_evidence"] = True
+        if automatic is not None:
+            body["automatic"] = serialize_automatic(automatic)
 
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_chat(self._peer.workspace_id, self._peer.id),

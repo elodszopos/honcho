@@ -55,7 +55,7 @@ those sources twice.
 
 | Question | Surface |
 |---|---|
-| what does this peer know | conclusion list, or semantic query |
+| what does this peer know | conclusion list, or semantic query; each query match carries its cosine distance, closest first |
 | what was retired here and why | conclusion list with `include_deleted` |
 | what happened to this one memory | the lineage route for that conclusion |
 | what did this message put into memory | conclusion list filtered on `admission.source_message_ids`; it finds the live version and every retired one built on the message |

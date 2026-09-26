@@ -38,6 +38,7 @@ TRACKED_DB_TARGETS: tuple[str, ...] = (
     "src.reconciler.sync_vectors.tracked_db",
     "src.reconciler.embed_now.tracked_db",
     "src.dialectic.core.tracked_db",
+    "src.dialectic.automatic.tracked_db",
     "src.dreamer.specialists.tracked_db",
     "src.dreamer.surprisal.tracked_db",
     "src.deriver.scope_backfill.tracked_db",

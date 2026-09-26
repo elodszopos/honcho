@@ -392,7 +392,9 @@ async def _query_documents_pgvector(
     max_distance: float | None,
     top_k: int,
 ) -> list[models.Document]:
-    """pgvector similarity search — pure DB operation."""
+    """pgvector similarity search — pure DB operation; each document carries its
+    cosine distance as a transient ``distance`` attribute."""
+    distance = models.Document.embedding.cosine_distance(embedding)
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
@@ -403,17 +405,19 @@ async def _query_documents_pgvector(
     )
 
     if max_distance is not None:
-        stmt = stmt.where(
-            models.Document.embedding.cosine_distance(embedding) <= max_distance
-        )
+        stmt = stmt.where(distance <= max_distance)
 
     stmt = apply_filter(stmt, models.Document, filters)
-    stmt = stmt.order_by(models.Document.embedding.cosine_distance(embedding)).limit(
-        top_k
+    ranked = (
+        stmt.add_columns(distance.label("distance")).order_by(distance).limit(top_k)
     )
 
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    result = await db.execute(ranked)
+    documents: list[models.Document] = []
+    for doc, doc_distance in result.all():
+        doc.distance = float(doc_distance)
+        documents.append(doc)
+    return documents
 
 
 async def query_documents(

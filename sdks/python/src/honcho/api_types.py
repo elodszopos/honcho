@@ -465,6 +465,7 @@ class ConclusionResponse(BaseModel):
     times_derived: int = 1
     created_at: datetime.datetime
     deleted_at: datetime.datetime | None = None
+    distance: float | None = Field(default=None, ge=0.0, le=2.0)
 
 
 class ConclusionLineageResponse(ConclusionResponse):
@@ -561,6 +562,20 @@ class ConclusionQueryParams(BaseModel):
     top_k: int = Field(default=10, ge=1, le=100)
     distance: float | None = Field(default=None, ge=0.0, le=1.0)
     filters: dict[str, Any] | None = None
+
+
+class AutomaticChatParams(BaseModel):
+    """Automatic chat: one prefetch on ``search_text``, one model call, no tools, no peer card;
+    ``exclude_conclusion_ids`` are shown to the model as already known."""
+
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    search_text: str = Field(min_length=1, max_length=10000)
+    exclude_conclusion_ids: list[str] = Field(default_factory=list, max_length=200)
+    exclude_session_id: str | None = None
+    conclusion_limit: int = Field(default=10, ge=0, le=50)
+    excerpt_limit: int = Field(default=5, ge=0, le=20)
+    max_answer_chars: int = Field(default=900, ge=100, le=5000)
 
 
 # ==============================================================================

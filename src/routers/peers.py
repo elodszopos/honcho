@@ -404,6 +404,7 @@ async def chat(
         session_allowlist=session_allowlist,
         response_model=response_model,
         evidence=evidence,
+        automatic=options.automatic,
     )
 
     # Prometheus metrics

@@ -127,6 +127,7 @@ export class Conclusion {
   readonly timesDerived: number
   readonly createdAt: string
   readonly deletedAt: string | null
+  readonly distance: number | null
 
   constructor(
     id: string,
@@ -140,7 +141,8 @@ export class Conclusion {
     removal: Record<string, unknown> | null = null,
     sourceIds: string[] | null = null,
     timesDerived: number = 1,
-    deletedAt: string | null = null
+    deletedAt: string | null = null,
+    distance: number | null = null
   ) {
     this.id = id
     this.content = content
@@ -154,6 +156,7 @@ export class Conclusion {
     this.timesDerived = timesDerived
     this.createdAt = createdAt
     this.deletedAt = deletedAt
+    this.distance = distance
   }
 
   static fromApiResponse(data: ConclusionResponse): Conclusion {
@@ -169,7 +172,8 @@ export class Conclusion {
       data.removal,
       data.source_ids ?? null,
       data.times_derived ?? 1,
-      data.deleted_at
+      data.deleted_at,
+      data.distance ?? null
     )
   }
 

@@ -94,7 +94,7 @@ async def list_conclusions(
 
 @router.post(
     "/query",
-    response_model=list[schemas.Conclusion],
+    response_model=list[schemas.ConclusionMatch],
 )
 async def query_conclusions(
     workspace_id: str = Path(...),
@@ -103,9 +103,10 @@ async def query_conclusions(
         description="Semantic search parameters for Conclusions",
     ),
     db: AsyncSession = read_db,
-) -> list[schemas.Conclusion]:
+) -> list[schemas.ConclusionMatch]:
     """
-    Query Conclusions using semantic search. Use `top_k` to control the number of results returned.
+    Query Conclusions using semantic search, closest first. Use `top_k` to control the number of results
+    and `distance` to drop matches farther than that cosine distance; each match reports its distance.
     """
     observer = None
     observed = None
@@ -136,7 +137,7 @@ async def query_conclusions(
             max_distance=body.distance,
             top_k=body.top_k,
         )
-    return [schemas.Conclusion.model_validate(doc) for doc in documents]
+    return [schemas.ConclusionMatch.model_validate(doc) for doc in documents]
 
 
 @router.get(

@@ -515,6 +515,17 @@ export const ChatQuerySchema = z
       .union([z.instanceof(z.ZodType), z.record(z.string(), z.unknown())])
       .optional(),
     includeEvidence: z.boolean().optional(),
+    automatic: z
+      .object({
+        searchText: z.string().min(1).max(10000),
+        excludeConclusionIds: z.array(z.string()).max(200).optional(),
+        excludeSessionId: z.string().optional(),
+        conclusionLimit: z.number().int().min(0).max(50).optional(),
+        excerptLimit: z.number().int().min(0).max(20).optional(),
+        maxAnswerChars: z.number().int().min(100).max(5000).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine(scopeExclusivityIssues)

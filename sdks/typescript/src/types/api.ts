@@ -367,6 +367,7 @@ export interface ConclusionResponse {
   times_derived?: number
   created_at: string
   deleted_at: string | null
+  distance?: number | null
 }
 
 /** One conclusion's full ledger: prior formulations and everything it absorbed. */

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .api_types import (
+    AutomaticChatParams,
     Evidence,
     MessageCreateParams,
     MessageResponse,
@@ -57,6 +58,15 @@ def serialize_response_format(
     if isinstance(response_format, type):
         return response_format.model_json_schema()
     return response_format
+
+
+def serialize_automatic(
+    automatic: AutomaticChatParams | dict[str, Any],
+) -> dict[str, Any]:
+    """Convert a chat automatic argument to its request body dict."""
+    if not isinstance(automatic, AutomaticChatParams):
+        automatic = AutomaticChatParams.model_validate(automatic)
+    return automatic.model_dump(exclude_none=True)
 
 
 def parse_chat_response(
@@ -290,6 +300,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         response_format: type[TResponseFormat],
         include_evidence: Literal[False] = False,
         timeout: float | None = None,
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> TResponseFormat | None: ...
 
     @overload
@@ -306,6 +317,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         response_format: type[TResponseFormat],
         include_evidence: Literal[True],
         timeout: float | None = None,
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> ChatResponse[TResponseFormat]: ...
 
     @overload
@@ -322,6 +334,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         response_format: dict[str, Any] | None = None,
         include_evidence: Literal[True],
         timeout: float | None = None,
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> ChatResponse[str]: ...
 
     @overload
@@ -338,6 +351,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         response_format: dict[str, Any] | None = None,
         include_evidence: Literal[False] = False,
         timeout: float | None = None,
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> str | None: ...
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -356,6 +370,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         timeout: float | None = Field(
             None, gt=0, description="Timeout in seconds for this chat request"
         ),
+        automatic: AutomaticChatParams | dict[str, Any] | None = None,
     ) -> ChatResponse[Any] | BaseModel | str | None:
         """
         Query the peer's representation with a natural language question.
@@ -401,6 +416,9 @@ class Peer(PeerBase, MetadataConfigMixin):
             timeout: Optional timeout in seconds for each HTTP attempt made by
                      this request. When omitted, the Honcho client's configured
                      timeout is used. Retries can extend total elapsed time.
+            automatic: Answer in automatic mode: one prefetch on its search text,
+                     one model call with no tools, no peer card. An
+                     ``AutomaticChatParams`` or a dict of its fields.
 
         Returns:
             Response string containing the answer (a JSON string when a schema
@@ -433,6 +451,8 @@ class Peer(PeerBase, MetadataConfigMixin):
             body["response_format"] = response_format_schema
         if include_evidence:
             body["include_evidence"] = True
+        if automatic is not None:
+            body["automatic"] = serialize_automatic(automatic)
 
         data = self._honcho._http.post(
             routes.peer_chat(self.workspace_id, self.id),

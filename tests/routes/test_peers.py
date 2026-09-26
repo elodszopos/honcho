@@ -7,7 +7,7 @@ from nanoid import generate as generate_nanoid
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import crud, models, schemas
 from src.config import settings
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_jwt
@@ -655,6 +655,69 @@ async def test_chat_peer_key_denied_for_non_member_session(
         json={"query": "what do you know?", "stream": False, "session_id": session_id},
     )
     assert response.status_code == 401
+
+
+def test_chat_automatic_forwards_options(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    mock_llm_call_functions: dict[str, Any],
+):
+    """The route hands the parsed automatic options to the dialectic."""
+    test_workspace, test_peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        json={
+            "query": "## Current user message\nlook at the reddit job",
+            "stream": False,
+            "automatic": {
+                "search_text": "reddit job",
+                "exclude_conclusion_ids": ["abc"],
+                "exclude_session_id": "thread-1",
+                "excerpt_limit": 3,
+            },
+        },
+    )
+    assert response.status_code == 200
+    automatic = mock_llm_call_functions["agentic_chat"].await_args.kwargs["automatic"]
+    assert isinstance(automatic, schemas.AutomaticChatOptions)
+    assert automatic.search_text == "reddit job"
+    assert automatic.exclude_conclusion_ids == ["abc"]
+    assert automatic.exclude_session_id == "thread-1"
+    assert automatic.excerpt_limit == 3
+    assert automatic.conclusion_limit == 10
+
+
+def test_chat_without_automatic_passes_none(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    mock_llm_call_functions: dict[str, Any],
+):
+    test_workspace, test_peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        json={"query": "Hello, how are you?", "stream": False},
+    )
+    assert response.status_code == 200
+    assert mock_llm_call_functions["agentic_chat"].await_args.kwargs["automatic"] is None
+
+
+def test_chat_automatic_rejects_streaming(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        json={
+            "query": "hey",
+            "stream": True,
+            "automatic": {"search_text": "hey"},
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_chat_with_optional_params(

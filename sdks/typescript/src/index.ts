@@ -38,7 +38,7 @@ export {
 } from './http/streaming'
 export { Message, type MessageInput } from './message'
 export { Page } from './pagination'
-export { Peer, PeerContext } from './peer'
+export { type AutomaticChatOptions, Peer, PeerContext } from './peer'
 export {
   Scope,
   type ScopeBackfillState,

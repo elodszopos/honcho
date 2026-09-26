@@ -108,6 +108,31 @@ export class PeerContext {
  * and local representations for contextual interactions. A peer represents
  * an entity (user, assistant, etc.) that can communicate within the system.
  */
+export interface AutomaticChatOptions {
+  searchText: string
+  excludeConclusionIds?: string[]
+  excludeSessionId?: string
+  conclusionLimit?: number
+  excerptLimit?: number
+  maxAnswerChars?: number
+}
+
+function toAutomaticBody(
+  options?: AutomaticChatOptions
+): Record<string, unknown> | undefined {
+  if (!options) {
+    return undefined
+  }
+  return {
+    search_text: options.searchText,
+    exclude_conclusion_ids: options.excludeConclusionIds,
+    exclude_session_id: options.excludeSessionId,
+    conclusion_limit: options.conclusionLimit,
+    excerpt_limit: options.excerptLimit,
+    max_answer_chars: options.maxAnswerChars,
+  }
+}
+
 export class Peer {
   /**
    * Unique identifier for this peer.
@@ -261,6 +286,7 @@ export class Peer {
     reasoning_level?: string
     response_format?: Record<string, unknown>
     include_evidence?: boolean
+    automatic?: Record<string, unknown>
   }): Promise<PeerChatResponse> {
     await this._ensureWorkspace()
     return this._http.post<PeerChatResponse>(
@@ -426,6 +452,7 @@ export class Peer {
       reasoningLevel?: string
       responseFormat: ZodType<T>
       includeEvidence: true
+      automatic?: AutomaticChatOptions
     }
   ): Promise<ChatResponse<T>>
   async chat<T>(
@@ -438,6 +465,7 @@ export class Peer {
       reasoningLevel?: string
       responseFormat: ZodType<T>
       includeEvidence?: false
+      automatic?: AutomaticChatOptions
     }
   ): Promise<T | null>
   async chat(
@@ -450,6 +478,7 @@ export class Peer {
       reasoningLevel?: string
       responseFormat?: Record<string, unknown>
       includeEvidence: true
+      automatic?: AutomaticChatOptions
     }
   ): Promise<ChatResponse<string>>
   async chat(
@@ -462,6 +491,7 @@ export class Peer {
       reasoningLevel?: string
       responseFormat?: Record<string, unknown>
       includeEvidence?: false
+      automatic?: AutomaticChatOptions
     }
   ): Promise<string | null>
   async chat<T>(
@@ -474,6 +504,7 @@ export class Peer {
       reasoningLevel?: string
       responseFormat?: ZodType<T> | Record<string, unknown>
       includeEvidence?: boolean
+      automatic?: AutomaticChatOptions
     }
   ): Promise<ChatResponse<T | string> | T | string | null> {
     const targetId = options?.target
@@ -496,6 +527,7 @@ export class Peer {
       reasoningLevel: options?.reasoningLevel,
       responseFormat: options?.responseFormat,
       includeEvidence: options?.includeEvidence,
+      automatic: options?.automatic,
     })
 
     const zodSchema =
@@ -512,6 +544,7 @@ export class Peer {
       reasoning_level: chatParams.reasoningLevel,
       response_format: Peer.toResponseFormatSchema(options?.responseFormat),
       include_evidence: chatParams.includeEvidence ? true : undefined,
+      automatic: toAutomaticBody(chatParams.automatic),
     })
 
     // An empty answer stays null either way, so evidence is still available

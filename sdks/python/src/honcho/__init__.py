@@ -46,6 +46,7 @@ from .aio import (
     WorkspaceConclusionsAio,
 )
 from .api_types import (
+    AutomaticChatParams,
     Evidence,
     EvidenceMessageRef,
     EvidenceObservation,
@@ -141,6 +142,7 @@ __all__ = [
     "AsyncDialecticStreamResponse",
     "ChatResponse",
     "DialecticStreamResponse",
+    "AutomaticChatParams",
     "Evidence",
     "EvidenceMessageRef",
     "EvidenceObservation",

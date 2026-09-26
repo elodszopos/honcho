@@ -722,6 +722,17 @@ class ConclusionDetail(Conclusion):
         return []
 
 
+class ConclusionMatch(Conclusion):
+    """A conclusion returned by semantic query, with its distance from the query."""
+
+    distance: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description="Cosine distance from the query, 0 to 2; lower is closer. Absent on an external vector store.",
+    )
+
+
 class ConclusionQuery(BaseModel):
     """Query parameters for semantic search of conclusions."""
 
@@ -1014,6 +1025,50 @@ _INCLUDE_EVIDENCE_DESCRIPTION = (
 )
 
 
+class AutomaticChatOptions(BaseModel):
+    """One server-side prefetch, one model call, no tools: the answer an assistant injects unasked."""
+
+    search_text: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=10000,
+            description=(
+                "Text embedded to pick conclusions and past-chat excerpts. The "
+                "query itself reaches only the model."
+            ),
+        ),
+        NulStripped,
+    ]
+    exclude_conclusion_ids: list[str] = Field(
+        default_factory=list,
+        max_length=200,
+        description=(
+            "Conclusions the assistant already holds: left out of the prefetch "
+            "and shown to the model as known, never to be restated."
+        ),
+    )
+    exclude_session_id: str | None = Field(
+        None,
+        description="Session whose messages never appear as excerpts; usually the chat being answered.",
+    )
+    conclusion_limit: int = Field(
+        default=10, ge=0, le=50, description="Conclusions prefetched on the search text"
+    )
+    excerpt_limit: int = Field(
+        default=5,
+        ge=0,
+        le=20,
+        description="Past-chat excerpts prefetched on the search text",
+    )
+    max_answer_chars: int = Field(
+        default=900,
+        ge=100,
+        le=5000,
+        description="Answer length the model is told to keep under",
+    )
+
+
 class DialecticOptions(BaseModel):
     session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"
@@ -1068,6 +1123,19 @@ class DialecticOptions(BaseModel):
     include_evidence: bool = Field(
         default=False, description=_INCLUDE_EVIDENCE_DESCRIPTION
     )
+    automatic: AutomaticChatOptions | None = Field(
+        None,
+        description=(
+            "Answer in automatic mode: one prefetch on `search_text`, one model "
+            "call with no tools, no peer card. Requires `stream` false."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def automatic_never_streams(self) -> Self:
+        if self.automatic is not None and self.stream:
+            raise ValueError("automatic mode does not stream; set stream to false")
+        return self
 
 
 class WorkspaceChatOptions(BaseModel):

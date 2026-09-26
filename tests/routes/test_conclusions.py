@@ -455,6 +455,50 @@ class TestConclusionRoutes:
         assert "observed_id" in conclusion
 
     @pytest.mark.asyncio
+    async def test_query_conclusions_reports_distance_closest_first(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        for content in ["User loves pizza and pasta", "User dislikes vegetables"]:
+            create_response = self._admit(
+                client,
+                workspace=test_workspace.name,
+                content=content,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                session_id=test_session.name,
+            )
+            assert create_response.status_code == 201
+
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/query",
+            json={
+                "query": "food preferences",
+                "filters": {"observer": test_peer.name, "observed": test_peer2.name},
+            },
+        )
+
+        assert response.status_code == 200
+        distances = [item["distance"] for item in response.json()]
+        assert len(distances) == 2
+        assert all(isinstance(d, float) and 0.0 <= d <= 2.0 for d in distances)
+        assert distances == sorted(distances)
+
+    @pytest.mark.asyncio
     async def test_query_conclusions_with_top_k(
         self,
         client: TestClient,

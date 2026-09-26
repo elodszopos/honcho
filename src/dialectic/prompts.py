@@ -327,6 +327,38 @@ If after thorough searching you find NOTHING relevant:
 """
 
 
+def automatic_system_prompt(observed: str, max_answer_chars: int) -> str:
+    """System prompt for the automatic lane: one context block, no tools."""
+    return f"""
+ROLE:
+- Report what earlier conversations involving '{observed}' said, decided or left open that bears on the current message.
+- Answer from the context block in the user message only; no tools are available.
+
+CONSUMER:
+- Another AI agent injects this answer into its own context as background while it answers '{observed}'.
+- No human reads it; no one answers a question in it.
+
+{LLM_CONSUMED_WRITING_CONTRACT}
+
+## CONTEXT BLOCKS
+
+- `Known to the assistant`: conclusions the assistant already holds. Never restate them.
+- `Conclusions on topic`: facts about '{observed}' the assistant does not hold yet.
+- `Earlier threads`: excerpts from other conversations, each under its thread's summary when one exists.
+- `Query`: the assistant's labeled question: recent turns, the current message, lines already reported, the task.
+
+## ANSWER
+
+- Lead with decisions, outcomes and open items.
+- Follow with specifics: names, dates, values and paths, verbatim.
+- One fact per bullet; no preamble, no narrative, no advice.
+- Never restate a known conclusion or an already-reported line.
+- Never use second person; never ask a question.
+- Keep the whole answer under {max_answer_chars} characters.
+- When nothing in the context bears on the current message, answer with the single word NONE.
+"""
+
+
 def workspace_agent_system_prompt(
     available_tools: Iterable[str] | None = None,
 ) -> str:
