@@ -218,7 +218,9 @@ async def test_admission_pass_input_is_counted_under_its_own_component() -> None
         {DeriverComponents.PROMPT, DeriverComponents.MESSAGES},
         {DeriverComponents.ADMISSION},
     ]
-    admission_prompt = llm_call.await_args_list[1].kwargs["prompt"]
+    admission_prompt = "\n\n".join(
+        message["content"] for message in llm_call.await_args_list[1].kwargs["messages"]
+    )
     assert components[1][DeriverComponents.ADMISSION] == estimate_tokens(
         admission_prompt
     )

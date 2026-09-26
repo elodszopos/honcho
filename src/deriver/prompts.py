@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 from functools import cache
 from inspect import cleandoc as c
+from typing import Any
 
 from src.utils.tokens import estimate_tokens
 from src.writing_contract import CONCLUSION_WRITING_CONTRACT
@@ -62,115 +63,121 @@ def _custom_instructions_section(custom_instructions: str | None) -> str:
     return c(
         f"""
         CUSTOM INSTRUCTIONS:
-        These instructions apply to the target peer identified below.
-        Custom instructions may narrow extraction further, but they cannot override or relax the NEVER EXTRACT rules.
+        - These instructions apply to the target peer named in the user turn.
+        - They may narrow extraction further; they cannot override or relax the NEVER EXTRACT rules.
         {normalized_custom_instructions}
         """
     )
 
 
-def minimal_deriver_prompt(
-    peer_id: str,
-    messages: str,
-    existing_conclusions: str | None = None,
-    candidate_observation: str | None = None,
+_ADMISSION_RULES = c(
+    """
+    MANDATORY LOOK-BEFORE-WRITE ADMISSION:
+    - Review every admission case as an independent candidate for its specified observer.
+    - Treat the existing conclusions in each case as retrieval only: semantic search found them before this decision.
+    - Never create, merge, enrich, or discard a memory because of an arbitrary similarity threshold.
+    - Read every retrieved conclusion in that case before proposing an entry.
+    - Return `action: "create"` and `target_id: null` when none expresses the same durable memory.
+    - Return `action: "enrich"` with `target_id` set to that conclusion id when one expresses the same memory.
+    - For enrichment, write the best current formulation from the retrieved conclusion and the new evidence.
+    - Never return a second semantic version of an existing memory.
+    - Never target a conclusion id that is absent from that admission case.
+    - Copy the case's `admission_case_id` into its decision.
+    - Return at most one decision per admission case.
+    - Supply a specific `reason_for_entry` naming what the conclusion is for and why it lasts.
+    - Return no decision for a case when the messages do not justify durable memory.
+    - Return all admitted cases together in one `explicit` list.
+
+    SOURCE-GROUNDING RULES:
+    - Re-read the original messages before deciding.
+    - Use only message IDs shown in the original messages.
+    - Cite the message that states the conclusion and the user's message that asked for it, confirmed it or built on it.
+      - At least one cited message is the user's.
+    - Preserve only claims, qualifiers, scope, negation and temporal bounds the cited messages support.
+    - Return no decision when an extracted candidate overstates or misattributes the source.
+    """
+)
+
+
+_CURATED_MEMORY_RULES = c(
+    """
+    REFERENCE, NEVER A SOURCE:
+    - The USER.md block below is what the assistant already knows about the user.
+    - Use it only to recognise a fact that is already held.
+    - Extract nothing from it; every conclusion comes from the <messages> block alone.
+    """
+)
+
+
+def deriver_system_prompt(
     custom_instructions: str | None = None,
+    *,
+    admission: bool = False,
+    curated_memory: str = "",
 ) -> str:
-    """
-    Generate minimal prompt for fast, selective observation extraction.
-
-    Args:
-        peer_id: The ID of the user being analyzed.
-        messages: Batch messages, each wrapped by ``format_deriver_message``.
-        existing_conclusions: Semantically retrieved candidate conclusions for agent review.
-        candidate_observation: One extracted candidate being evaluated for admission.
-        custom_instructions: Optional narrowing instructions for the target peer.
-
-    Returns:
-        Formatted prompt string for observation extraction.
-    """
-    custom_instructions_section = _custom_instructions_section(custom_instructions)
-    admission_section = ""
-    if existing_conclusions is not None:
-        candidate_section = c(
+    """The static rules for extraction, or for admission; custom instructions and the user's
+    curated memory close the block so the cached prefix survives their edits longest."""
+    sections = [
+        c(
             f"""
-            ADMISSION CASES UNDER REVIEW:
-            <admission_cases>
-            {candidate_observation or "(missing -- admit nothing)"}
-            </admission_cases>
-
-            SOURCE-GROUNDING RULES:
-            - Re-read the original messages below before deciding.
-            - Use only message IDs shown in the original messages.
-            - Cite the message that states the conclusion and the user's message that asked for it, confirmed it or built on it; at least one cited message is the user's.
-            - Preserve only claims, qualifiers, scope, negation and temporal bounds the cited messages support.
-            - Return no decision when an extracted candidate overstates or misattributes the source.
-            """
-        )
-        admission_section = c(
-            f"""
-            MANDATORY LOOK-BEFORE-WRITE ADMISSION:
-            - Review every admission case as an independent candidate for its specified observer.
-            - The existing conclusions in each case were retrieved by semantic search before this decision.
-            - Cosine similarity is retrieval only.
-            - Never create, merge, enrich, or discard a memory because of an arbitrary similarity threshold.
-            - Read every retrieved conclusion in that case before proposing an entry.
-            - If none expresses the same durable memory, return `action: "create"` and `target_id: null`.
-            - If one expresses the same memory, return `action: "enrich"` and set `target_id` to that conclusion id.
-            - For enrichment, write the best current formulation using the retrieved conclusion and the new evidence.
-            - Never return a second semantic version of an existing memory.
-            - Never target a conclusion id that is absent from that admission case.
-            - Copy the case's `admission_case_id` into its decision.
-            - Return at most one decision per admission case.
-            - Supply a specific `reason_for_entry` that names what the conclusion is for and why it lasts.
-            - Return no decision for a case when the messages do not justify durable memory.
-            - Return all admitted cases together in one `explicit` list.
-
-            SEARCH RESULTS BY ADMISSION CASE:
-            <existing_conclusions>
-            {existing_conclusions or "(none)"}
-            </existing_conclusions>
-
-            {candidate_section}
-            """
-        )
-    return c(
-        f"""
-Extract the conclusions this conversation reached that a later conversation on the same topic would need, and the facts it established about the target peer.
+ROLE:
+- Extract the conclusions this conversation reached that a later conversation on the same topic would need.
+- Extract the facts it established about the target peer.
 
 TARGET PEER AND MESSAGES:
-- The target peer is named under `Target peer:` below and is called "the user" in every conclusion; never an id, username or name.
-- Each message is wrapped as `<message idx="N" message_id="ID" peer="..." target="true|false" time="...">`. `target="true"` marks the user's own messages. `message_id` is the database id a conclusion cites; `idx` is never cited.
-- A conclusion may come from any peer's message. One another peer stated counts once the user accepted it: agreed, built on it, or continued without contradicting it.
+- The target peer is named under `Target peer:` in the user turn.
+- Call the target peer "the user" in every conclusion; never an id, username or name.
+- Each message is wrapped as `<message idx="N" message_id="ID" peer="..." target="true|false" time="...">`.
+  - `target="true"` marks the user's own messages.
+  - `message_id` is the database id a conclusion cites; `idx` is never cited.
+- A conclusion may come from any peer's message.
+  - One another peer stated counts once the user accepted it: agreed, built on it, or continued without contradicting it.
 - A batch with no `target="true"` message yields nothing: nothing in it was accepted.
 - Name other people, projects, jobs, systems and places explicitly.
 
-WHAT A CONCLUSION IS, extract every one that qualifies:
+WHAT A CONCLUSION IS:
 - A fact the conversation established about a topic: what exists, how something works, a finding, a root cause, an outcome.
 - A decision, ruling or requirement for a stream of work: how the user wants a specific thing done, what was agreed, what was rejected.
-- A pointer: where something lives, a job, skill, file, channel, path or name, when a later conversation would look for it.
+- A pointer to where something lives, when a later conversation would look for it: a job, skill, file, channel, path or name.
 - The user's relationship to a topic: what they run, maintain, use or care about, and why.
-- A fact about the user: a preference, trait, relationship or circumstance. A later pass files always-relevant ones elsewhere; extract them here.
+- A fact about the user: a preference, trait, relationship or circumstance.
+  - A later pass files always-relevant ones elsewhere; extract them here.
 - Any topic qualifies: work, projects, home, health, money, people, hobbies.
 
+WHEN TO EXTRACT:
+- Extract a conclusion when the next conversation on its topic would be worse without it.
+- Keep one wording per fact, the most general accurate one.
+- Merge two candidates that say the same thing into one.
+- Small talk, acknowledgements and status updates yield nothing.
+
 HOW TO WRITE ONE:
-- Name the topic inside the conclusion so it is found when the topic comes up ("For the upstream gap jobs, ...", "The user's home network ...").
-- One fact per conclusion, self-contained, understandable months later without the conversation.
-- Plain wording, no hedging, no inflation; "the user prefers X" never becomes a philosophy or a coined label.
-- Absolute dates for time-bound facts ("June 26, 2025", never "yesterday"); no date on a standing preference or rule.
+- Name the topic inside the conclusion ("For the upstream gap jobs, ...", "The user's home network ...").
+  - Why: a conclusion is found by its topic.
+- State one fact per conclusion.
+- Make it self-contained: understandable months later without the conversation.
+- Use plain wording: no hedging, no inflation, no coined label; "the user prefers X" never becomes a philosophy.
+- Use absolute dates for time-bound facts ("June 26, 2025", never "yesterday").
+- Put no date on a standing preference or rule.
 - Keep the behavioral hook when there is one: when, do, avoid.
 
 {CONCLUSION_WRITING_CONTRACT}
 
 NEVER EXTRACT:
-- Passwords, API keys, tokens, cookies, private keys, recovery codes and other authenticators.
-- Transient state: a status ("finished X", "checked Y"), progress, an in-progress task, a scheduled event, a debugging observation; anything true only for days.
-- Values that change often: counts, run results, run timestamps, version numbers, current numeric settings. The stable name, path or job that holds them may be a pointer.
-- The act of asking, acknowledging or recording: "asked to check", "sounds good", "asked to remember". Extract the content, never the act.
-- Text copied from tool output or a report; extract the finding, not the transcript.
-- Guesses: anything that needs "likely" or "probably"; invented specifics, entities or affiliations; a mindset label the user never used.
-- Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle or party, current location, trip-only decisions. This holds after the trip ends: durable travel history belongs to the authoritative trip project. This exclusion is specific to travel trips and never covers a software, home or other non-travel outcome.
-- Travel-persona doctrine: travel-specific preferences or directives about itinerary pacing, route order, maps, navigation, parking, ferries, attractions, food, weather, photographic light, hiking, vehicles, lodging, location sharing, or travel-answer/message behavior. Even when durable, standing, or cross-trip, these belong only in the owning travel persona.
+- Credentials: passwords, API keys, tokens, cookies, private keys, recovery codes.
+- Transient state: a status, progress, an in-progress task, a scheduled event, a debugging observation; anything true only for days.
+- Values that change often: counts, run results, run timestamps, version numbers, current numeric settings.
+  - The stable name, path or job that holds them may be a pointer.
+- The act of asking, acknowledging or recording: "asked to check", "sounds good", "asked to remember".
+  - Extract the content, never the act.
+- Text copied from tool output or a report.
+  - Extract the finding, not the transcript.
+- Guesses: anything that needs "likely" or "probably"; invented specifics, entities or affiliations.
+- A fact the `USER.md` block at the end of these rules already states.
+- Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle or party, current location, trip-only decisions.
+  - This holds after the trip ends: durable travel history belongs to the authoritative trip project.
+  - This exclusion is specific to travel trips and never covers a software, home or other non-travel outcome.
+- Travel-persona doctrine: travel-specific preferences or directives about itinerary pacing, route order, maps, navigation, parking, ferries, attractions, food, weather, photographic light, hiking, vehicles, lodging, location sharing, or travel-answer/message behavior.
+  - Even when durable, standing, or cross-trip, these belong only in the owning travel persona.
 - Live or country-operational findings: timetables, fares, prices, opening hours, weather, incidents, availability, fuel, parking, road/ferry status, operator behavior, country terminology, source/API mechanics, or other fetched answers.
 
 <examples>
@@ -199,23 +206,105 @@ NOTHING, explicit: [] is the correct output:
 - "Norway's operator uses this API field and the current fare is NOK 735" (country mechanics and a fetched answer)
 - `<message target="false" peer="assistant">I read the config file and found the port is 8080</message>` with no user reply (a value nobody kept)
 </examples>
-
-OUTPUT:
-- Small talk, acknowledgements and pure status updates yield nothing.
-- A working discussion usually yields one to a few conclusions; extract each one that qualifies, never pad and never drop a qualifying one to stay short.
-
-{admission_section}
-
-{custom_instructions_section}
-
-Target peer:
-{peer_id}
-
-Messages to analyze:
-<messages>
-{messages}
-</messages>
 """
+        )
+    ]
+    if admission:
+        sections.append(_ADMISSION_RULES)
+    custom = _custom_instructions_section(custom_instructions)
+    if custom:
+        sections.append(custom)
+    if curated_memory:
+        sections.append(_CURATED_MEMORY_RULES)
+        sections.append(curated_memory)
+    return "\n\n".join(sections)
+
+
+def deriver_user_prompt(
+    peer_id: str,
+    messages: str,
+    existing_conclusions: str | None = None,
+    candidate_observation: str | None = None,
+) -> str:
+    """The batch under review, and the admission cases when this is the admission pass."""
+    sections = [
+        c(
+            f"""
+            Target peer:
+            {peer_id}
+
+            Messages to analyze:
+            <messages>
+            {messages}
+            </messages>
+            """
+        )
+    ]
+    if existing_conclusions is not None:
+        sections.append(
+            c(
+                f"""
+                SEARCH RESULTS BY ADMISSION CASE:
+                <existing_conclusions>
+                {existing_conclusions or "(none)"}
+                </existing_conclusions>
+
+                ADMISSION CASES UNDER REVIEW:
+                <admission_cases>
+                {candidate_observation or "(missing -- admit nothing)"}
+                </admission_cases>
+                """
+            )
+        )
+    return "\n\n".join(sections)
+
+
+def deriver_messages(
+    peer_id: str,
+    messages: str,
+    existing_conclusions: str | None = None,
+    candidate_observation: str | None = None,
+    custom_instructions: str | None = None,
+    curated_memory: str = "",
+) -> list[dict[str, Any]]:
+    """System rules plus the user turn, ready for the model call."""
+    return [
+        {
+            "role": "system",
+            "content": deriver_system_prompt(
+                custom_instructions,
+                admission=existing_conclusions is not None,
+                curated_memory=curated_memory,
+            ),
+        },
+        {
+            "role": "user",
+            "content": deriver_user_prompt(
+                peer_id, messages, existing_conclusions, candidate_observation
+            ),
+        },
+    ]
+
+
+def minimal_deriver_prompt(
+    peer_id: str,
+    messages: str,
+    existing_conclusions: str | None = None,
+    candidate_observation: str | None = None,
+    custom_instructions: str | None = None,
+    curated_memory: str = "",
+) -> str:
+    """The whole prompt as one text: the system rules followed by the user turn."""
+    return "\n\n".join(
+        message["content"]
+        for message in deriver_messages(
+            peer_id,
+            messages,
+            existing_conclusions,
+            candidate_observation,
+            custom_instructions,
+            curated_memory,
+        )
     )
 
 

@@ -1217,6 +1217,16 @@ class DialecticSettings(HonchoSettings):
         return self
 
 
+class CuratedMemorySettings(HonchoSettings):
+    """Per-workspace path of the user's curated memory file, read into prompt static blocks."""
+
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="CURATED_MEMORY_", env_nested_delimiter="__", extra="ignore"
+    )
+
+    PATHS: dict[str, str] = Field(default_factory=dict)
+
+
 class SummarySettings(HonchoSettings):
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="SUMMARY_", env_nested_delimiter="__", extra="ignore"
@@ -1592,6 +1602,7 @@ class AppSettings(HonchoSettings):
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
+    CURATED_MEMORY: CuratedMemorySettings = Field(default_factory=CuratedMemorySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)

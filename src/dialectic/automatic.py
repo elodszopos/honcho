@@ -15,6 +15,7 @@ from src.dialectic import prompts
 from src.dialectic.core import DialecticAgent
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils import summarizer
+from src.utils.curated_memory import curated_memory_block
 from src.utils.evidence import EvidenceAccumulator
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.types import embedding_call_purpose
@@ -23,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 _EXCERPT_MESSAGE_CHARS = 400
 _MIN_EXCERPT_MESSAGE_CHARS = 40
-_SUMMARY_CHARS = 300
 _NONE_ANSWER = "NONE"
 
 Snippet = tuple[list[models.Message], list[models.Message]]
@@ -62,7 +62,9 @@ class AutomaticDialecticAgent(DialecticAgent):
         self.messages[0] = {
             "role": "system",
             "content": prompts.automatic_system_prompt(
-                observed, options.max_answer_chars
+                observed,
+                options.max_answer_chars,
+                curated_memory_block(workspace_name),
             ),
         }
 
@@ -223,7 +225,7 @@ def _render(
             head = f"### Thread {index} ({session})"
             summary = summaries.get(session)
             if summary:
-                head += f"\nSummary: {summary[:_SUMMARY_CHARS]}"
+                head += f"\nSummary: {summary}"
             lines = [
                 format_new_turn_with_timestamp(
                     message.content[:_EXCERPT_MESSAGE_CHARS],

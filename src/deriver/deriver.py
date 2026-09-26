@@ -26,6 +26,7 @@ from src.telemetry.prometheus.metrics import (
 )
 from src.telemetry.sentry import with_sentry_transaction
 from src.utils.config_helpers import get_configuration
+from src.utils.curated_memory import curated_memory_block
 from src.utils.representation import (
     AdmissionRepresentation,
     ExplicitObservation,
@@ -36,9 +37,9 @@ from src.utils.retryable_errors import is_retryable_error
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
 from .prompts import (
+    deriver_messages,
     estimate_deriver_prompt_tokens,
     format_deriver_message,
-    minimal_deriver_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -196,12 +197,14 @@ async def process_representation_tasks_batch(
         },
     )
 
-    # Build prompt
-    prompt = minimal_deriver_prompt(
+    curated_memory = curated_memory_block(latest_message.workspace_name)
+    extraction_messages = deriver_messages(
         peer_id=observed,
         messages=formatted_messages,
         custom_instructions=custom_instructions,
+        curated_memory=curated_memory,
     )
+    prompt = "\n\n".join(message["content"] for message in extraction_messages)
 
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
@@ -238,7 +241,8 @@ async def process_representation_tasks_batch(
     try:
         response = await honcho_llm_call(
             model_config=model_config,
-            prompt=prompt,
+            prompt=extraction_messages[-1]["content"],
+            messages=extraction_messages,
             max_tokens=max_tokens,
             response_model=ExtractedRepresentation,
             json_mode=True,
@@ -359,7 +363,7 @@ async def process_representation_tasks_batch(
                 }
             )
 
-        admission_prompt = minimal_deriver_prompt(
+        admission_messages = deriver_messages(
             peer_id=observed,
             messages=formatted_messages,
             existing_conclusions=json.dumps(
@@ -378,6 +382,10 @@ async def process_representation_tasks_batch(
             ),
             candidate_observation=json.dumps(admission_cases, indent=2),
             custom_instructions=custom_instructions,
+            curated_memory=curated_memory,
+        )
+        admission_prompt = "\n\n".join(
+            message["content"] for message in admission_messages
         )
         track_deriver_input_tokens(
             task_type=DeriverTaskTypes.INGESTION,
@@ -388,7 +396,8 @@ async def process_representation_tasks_batch(
         try:
             admission_response = await honcho_llm_call(
                 model_config=model_config,
-                prompt=admission_prompt,
+                prompt=admission_messages[-1]["content"],
+                messages=admission_messages,
                 max_tokens=max_tokens,
                 response_model=AdmissionRepresentation,
                 json_mode=True,

@@ -200,6 +200,11 @@ model = "gpt-5.4-mini"
 # transport = "gemini"
 # model = "gemini-2.5-pro"
 
+# Curated memory: per-workspace path of the user's USER.md, appended at the end of the
+# deriver's and the automatic answer's system prompt (mounted read-only into the containers)
+[curated_memory]
+# PATHS = { hermes = "/memories/USER.md" }
+
 # Summary settings
 [summary]
 ENABLED = true

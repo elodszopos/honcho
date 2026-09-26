@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from src.deriver.prompts import (
+    deriver_messages,
     estimate_deriver_prompt_tokens,
     estimate_minimal_deriver_prompt_tokens,
     format_deriver_message,
@@ -97,14 +98,26 @@ def test_minimal_deriver_prompt_separates_source_messages_from_admission_cases()
 def test_conclusions_cover_topic_facts_decisions_pointers_and_the_user() -> None:
     prompt = minimal_deriver_prompt(peer_id="alice", messages="alice: hello")
 
-    assert "WHAT A CONCLUSION IS, extract every one that qualifies:" in prompt
+    assert "WHAT A CONCLUSION IS:" in prompt
     assert "A fact the conversation established about a topic" in prompt
     assert "A decision, ruling or requirement for a stream of work" in prompt
-    assert "A pointer: where something lives" in prompt
+    assert "A pointer to where something lives" in prompt
     assert "The user's relationship to a topic" in prompt
-    assert "A fact about the user: a preference, trait, relationship or circumstance" in prompt
-    assert "Any topic qualifies: work, projects, home, health, money, people, hobbies." in prompt
+    assert (
+        "A fact about the user: a preference, trait, relationship or circumstance"
+        in prompt
+    )
+    assert (
+        "Any topic qualifies: work, projects, home, health, money, people, hobbies."
+        in prompt
+    )
     assert "Name the topic inside the conclusion" in prompt
+    assert (
+        "Extract a conclusion when the next conversation on its topic would be worse without it."
+        in prompt
+    )
+    assert "Merge two candidates that say the same thing into one." in prompt
+    assert "extract every one" not in prompt
 
 
 def test_conclusions_from_the_other_peer_count_once_the_user_accepted_them() -> None:
@@ -117,7 +130,7 @@ def test_conclusions_from_the_other_peer_count_once_the_user_accepted_them() -> 
 
     assert "A conclusion may come from any peer's message." in prompt
     assert "agreed, built on it, or continued without contradicting it" in prompt
-    assert "at least one cited message is the user's" in prompt
+    assert "At least one cited message is the user's." in prompt
     assert "assistant-stated, user accepted; cite both messages" in prompt
 
 
@@ -125,13 +138,46 @@ def test_never_extract_names_secrets_transient_state_and_volatile_values() -> No
     prompt = minimal_deriver_prompt(peer_id="alice", messages="alice: hello")
 
     assert "NEVER EXTRACT:" in prompt
-    assert "Passwords, API keys, tokens" in prompt
+    assert "Credentials: passwords, API keys, tokens" in prompt
+    assert (
+        "A fact the `USER.md` block at the end of these rules already states." in prompt
+    )
     assert "Transient state: a status" in prompt
     assert "Values that change often" in prompt
     assert "The stable name, path or job that holds them may be a pointer." in prompt
     assert "The act of asking, acknowledging or recording" in prompt
     assert "OWNER GATE" not in prompt
     assert "ZERO extractions" not in prompt
+
+
+def test_rules_go_to_the_system_turn_and_the_batch_to_the_user_turn() -> None:
+    system, user = deriver_messages(
+        peer_id="alice",
+        messages='<message idx="0" message_id="7" peer="alice" target="true">hi</message>',
+        existing_conclusions="candidate-1: Alice likes tea.",
+        candidate_observation="Alice prefers unsweetened tea.",
+        custom_instructions="Prefer concrete timeline facts.",
+        curated_memory="## USER.md\nAlice is vegetarian.",
+    )
+
+    assert system["role"] == "system" and user["role"] == "user"
+    assert "NEVER EXTRACT:" in system["content"]
+    assert "MANDATORY LOOK-BEFORE-WRITE ADMISSION:" in system["content"]
+    assert "Prefer concrete timeline facts." in system["content"]
+    assert system["content"].endswith("## USER.md\nAlice is vegetarian.")
+    assert "REFERENCE, NEVER A SOURCE:" in system["content"]
+    assert "Extract nothing from it" in system["content"]
+    assert 'message_id="7"' in user["content"]
+    assert "Alice prefers unsweetened tea." in user["content"]
+    assert "candidate-1: Alice likes tea." in user["content"]
+    assert "MANDATORY LOOK-BEFORE-WRITE ADMISSION:" not in user["content"]
+
+
+def test_extraction_turn_carries_no_admission_rules() -> None:
+    system, _user = deriver_messages(peer_id="alice", messages="alice: hello")
+
+    assert "MANDATORY LOOK-BEFORE-WRITE ADMISSION:" not in system["content"]
+    assert "## USER.md" not in system["content"]
 
 
 def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> None:

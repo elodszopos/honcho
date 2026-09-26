@@ -261,6 +261,25 @@ class TestAutomaticAgent:
         assert "single word NONE" in system
         assert "## TOOLS" not in system
 
+    async def test_curated_memory_closes_the_system_prompt(
+        self, automatic_data: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ):
+        from src.utils import curated_memory
+
+        workspace = automatic_data[0]
+        path = tmp_path / "USER.md"
+        path.write_text("- the user is vegetarian\n", encoding="utf-8")
+        monkeypatch.setattr(
+            settings.CURATED_MEMORY, "PATHS", {workspace.name: str(path)}
+        )
+        curated_memory._cache.clear()
+
+        agent = make_agent(automatic_data)
+
+        system = agent.messages[0]["content"]
+        assert system.rstrip().endswith("## USER.md\n- the user is vegetarian")
+        assert "a fact `USER.md` states" in system
+
     async def test_none_answer_becomes_empty(self, automatic_data: Any):
         answer, _ = await run_answer(make_agent(automatic_data), content="NONE.")
 

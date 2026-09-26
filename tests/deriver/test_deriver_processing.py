@@ -327,8 +327,11 @@ class TestDeriverProcessing:
                 return_value=123,
             ) as mock_estimate_prompt_tokens,
             patch(
-                "src.deriver.deriver.minimal_deriver_prompt",
-                return_value="prompt",
+                "src.deriver.deriver.deriver_messages",
+                return_value=[
+                    {"role": "system", "content": "rules"},
+                    {"role": "user", "content": "prompt"},
+                ],
             ) as mock_prompt,
             patch(
                 "src.deriver.deriver.honcho_llm_call",
@@ -358,6 +361,10 @@ class TestDeriverProcessing:
         if await_args is None:
             raise AssertionError("Expected deriver LLM call")
         assert await_args.kwargs["prompt"] == "prompt"
+        assert await_args.kwargs["messages"][0] == {
+            "role": "system",
+            "content": "rules",
+        }
 
     async def test_work_unit_key_generation(
         self,

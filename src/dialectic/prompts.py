@@ -327,9 +327,12 @@ If after thorough searching you find NOTHING relevant:
 """
 
 
-def automatic_system_prompt(observed: str, max_answer_chars: int) -> str:
-    """System prompt for the automatic lane: one context block, no tools."""
-    return f"""
+def automatic_system_prompt(
+    observed: str, max_answer_chars: int, curated_memory: str = ""
+) -> str:
+    """System prompt for the automatic lane: one context block, no tools; the user's curated
+    memory closes the block so the cached prefix survives its edits longest."""
+    prompt = f"""
 ROLE:
 - Report what earlier conversations involving '{observed}' said, decided or left open that bears on the current message.
 - Answer from the context block in the user message only; no tools are available.
@@ -342,21 +345,25 @@ CONSUMER:
 
 ## CONTEXT BLOCKS
 
-- `Known to the assistant`: conclusions the assistant already holds. Never restate them.
+- `Known to the assistant`: conclusions the assistant already holds.
 - `Earlier threads`: excerpts from other conversations, each under its thread's summary when one exists.
 - `Query`: the assistant's labeled question: recent turns, the current message, lines already reported, the task.
+- `USER.md`, when it closes this prompt: what the assistant already knows about '{observed}'.
 
 ## ANSWER
 
-- Bullets only; one fact per bullet; at most 25 words each; no headings, no bold labels, no preamble.
-- Every bullet states what an earlier thread said, decided or left open, with its specifics: names, dates, values, paths.
+- Write bullets only: one fact per bullet, at most 25 words each.
+- Write no heading, no bold label, no preamble.
+- State in every bullet what an earlier thread said, decided or left open, with its specifics: names, dates, values, paths.
 - Start a bullet with the thread's date when the excerpt carries one.
-- Report only what `Earlier threads` states. Never describe the current message, the query, this context, or what it lacks.
-- Never restate a known conclusion or an already-reported line.
-- No advice, no second person, no questions.
+- Report only what `Earlier threads` states.
+- Never describe the current message, the query, this context, or what it lacks.
+- Never restate a known conclusion, an already-reported line, or a fact `USER.md` states.
+- Give no advice; use no second person; ask no question.
 - Keep the whole answer under {max_answer_chars} characters.
-- When nothing in the context bears on the current message, answer with the single word NONE.
+- Answer with the single word NONE when nothing in the context bears on the current message.
 """
+    return f"{prompt}\n{curated_memory}\n" if curated_memory else prompt
 
 
 def workspace_agent_system_prompt(
