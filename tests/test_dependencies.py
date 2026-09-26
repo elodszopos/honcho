@@ -241,6 +241,24 @@ async def test_read_only_session_runs_in_autocommit_on_the_wire() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_only_session_carries_hnsw_scan_settings() -> None:
+    # Filtered vector searches run on read_only sessions, where a SET LOCAL has
+    # no transaction to apply to, so the settings must come with the connection.
+    from sqlalchemy import text
+
+    async with real_tracked_db("read_op", read_only=True) as db:
+        settings_row = (
+            await db.execute(
+                text(
+                    "SELECT current_setting('hnsw.iterative_scan', true), "
+                    + "current_setting('hnsw.ef_search', true)"
+                )
+            )
+        ).one()
+    assert tuple(settings_row) == ("relaxed_order", "100")
+
+
+@pytest.mark.asyncio
 async def test_write_session_holds_idle_in_transaction_after_select() -> None:
     # Contrast guard documenting WHY the read engine exists: the default
     # (transactional) session autobegins on the first statement and leaves the

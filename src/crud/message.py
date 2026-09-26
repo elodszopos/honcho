@@ -18,7 +18,6 @@ from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
-from .hnsw import widen_hnsw_scan
 from .peer import reject_scope_peers
 from .session import get_or_create_session
 
@@ -1064,7 +1063,6 @@ async def search_message_snippets(
 
     best: dict[str, tuple[float, models.Message]] = {}
     async with tracked_db("message.search_snippets", read_only=True) as db:
-        await widen_hnsw_scan(db)
         for embedding in embeddings:
             distance = models.MessageEmbedding.embedding.cosine_distance(embedding)
             stmt = (

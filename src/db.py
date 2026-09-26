@@ -25,6 +25,9 @@ connect_args = {
     # Bound a single connection attempt so it fails fast instead of hanging when
     # the server/pooler is unreachable or stalled (psycopg, seconds).
     "connect_timeout": settings.DB.CONNECT_TIMEOUT_SECONDS,
+    # Filtered HNSW scans keep going until LIMIT fills. Set per connection because
+    # AUTOCOMMIT read sessions have no transaction for a SET LOCAL to apply to.
+    "options": "-c hnsw.iterative_scan=relaxed_order -c hnsw.ef_search=100",
 }
 
 # Context variable to store request context

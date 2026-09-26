@@ -8,8 +8,10 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
 
+import httpx
 import tiktoken
 from nanoid import generate as generate_nanoid
+from pydantic import BaseModel
 
 from .config import (
     EmbeddingEncodingFormat,
@@ -25,6 +27,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+# Room for the BOS and EOS the server adds, and for re-tokenization at the cut.
+_SERVER_TOKEN_MARGIN = 16
+
+
+class _TokenizeResponse(BaseModel):
+    tokens: list[int]
+
+
+class _DetokenizeResponse(BaseModel):
+    content: str
 
 
 async def _emit_embedding_call(
@@ -258,9 +271,40 @@ class _EmbeddingClient:
             self.encoding = tiktoken.get_encoding("cl100k_base")
         self.max_embedding_tokens_per_request: int = max_tokens_per_request
 
+        self.tokenizer: httpx.AsyncClient | None = None
+        if config.tokenizer_url is not None:
+            tokenizer_kwargs: dict[str, Any] = {"base_url": config.tokenizer_url}
+            if config.timeout is not None:
+                tokenizer_kwargs["timeout"] = config.timeout
+            self.tokenizer = httpx.AsyncClient(**tokenizer_kwargs)
+
     @property
     def provider(self) -> str:
         return self.transport
+
+    async def _fit_to_server_context(self, text: str) -> str:
+        """Cut `text` to the server's context, counted by the server's own tokenizer."""
+        limit = self.max_embedding_tokens - _SERVER_TOKEN_MARGIN
+        # Within half the limit a text fits even at two tokens per character.
+        if self.tokenizer is None or len(text) <= limit // 2:
+            return text
+        tokenized = await self.tokenizer.post(
+            "/tokenize", json={"content": text, "add_special": False}
+        )
+        tokenized.raise_for_status()
+        tokens = _TokenizeResponse.model_validate_json(tokenized.content).tokens
+        if len(tokens) <= limit:
+            return text
+        detokenized = await self.tokenizer.post(
+            "/detokenize", json={"tokens": tokens[:limit]}
+        )
+        detokenized.raise_for_status()
+        logger.warning(
+            "truncated embedding input to the server context: %d->%d tokens",
+            len(tokens),
+            limit,
+        )
+        return _DetokenizeResponse.model_validate_json(detokenized.content).content
 
     def _validate_embedding_dimensions(self, embedding: list[float]) -> list[float]:
         if len(embedding) != self.vector_dimensions:
@@ -296,7 +340,7 @@ class _EmbeddingClient:
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
 
-        if token_count > self.max_embedding_tokens:
+        if self.tokenizer is None and token_count > self.max_embedding_tokens:
             raise EmbeddingTokenLimitError(
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
@@ -332,7 +376,10 @@ class _EmbeddingClient:
         openai_client = cast("AsyncOpenAI", self.client)
 
         async def _call_openai() -> list[float]:
-            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            openai_kwargs: dict[str, Any] = {
+                "model": self.model,
+                "input": [await self._fit_to_server_context(query)],
+            }
             self._apply_encoding_format(openai_kwargs)
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
@@ -396,7 +443,7 @@ class _EmbeddingClient:
         token_counts: list[int] = []
         for idx, text in enumerate(texts):
             token_ids = self.encoding.encode(text)
-            if len(token_ids) > self.max_embedding_tokens:
+            if self.tokenizer is None and len(token_ids) > self.max_embedding_tokens:
                 if on_oversize == "truncate":
                     original_count = len(token_ids)
                     text, tokens = self._truncate_to_token_limit(text)
@@ -584,9 +631,12 @@ class _EmbeddingClient:
                                 self._validate_embedding_dimensions(embedding.values)
                             )
             else:  # openai
+                inputs = await asyncio.gather(
+                    *(self._fit_to_server_context(item.text) for item in batch)
+                )
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
-                    "input": [item.text for item in batch],
+                    "input": list(inputs),
                 }
                 self._apply_encoding_format(openai_kwargs)
                 if self.send_dimensions:
@@ -754,6 +804,7 @@ class EmbeddingClient:
             runtime_config.api_key,
             runtime_config.base_url,
             runtime_config.max_batch_size,
+            runtime_config.tokenizer_url,
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,

@@ -3,6 +3,7 @@ import base64
 from types import SimpleNamespace
 from typing import Any, cast
 
+import httpx
 import pytest
 from google.genai import types as genai_types
 
@@ -58,6 +59,24 @@ class FakeOpenAIEmbeddingsAPI:
         elif self.truncate_data_to is not None:
             data = data[: self.truncate_data_to]
         return SimpleNamespace(data=data)
+
+
+class FakeTokenizerClient:
+    """llama.cpp tokenizer endpoints with one token per character."""
+
+    def __init__(self, *, base_url: str, **_: Any) -> None:
+        self.base_url: str = base_url
+        self.calls: list[str] = []
+
+    async def post(self, path: str, *, json: dict[str, Any]) -> httpx.Response:
+        self.calls.append(path)
+        if path == "/tokenize":
+            body: dict[str, Any] = {"tokens": [ord(char) for char in json["content"]]}
+        else:
+            body = {"content": "".join(chr(token) for token in json["tokens"])}
+        return httpx.Response(
+            200, json=body, request=httpx.Request("POST", self.base_url + path)
+        )
 
 
 @pytest.mark.asyncio
@@ -355,6 +374,8 @@ def _build_openai_client(
     vector_dimensions: int,
     max_batch_size: int | None = None,
     encoding_format: EmbeddingEncodingFormat = "float",
+    max_input_tokens: int = 8192,
+    tokenizer_url: str | None = None,
 ) -> tuple[_EmbeddingClient, FakeOpenAIEmbeddingsAPI]:
     fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding)
 
@@ -378,14 +399,99 @@ def _build_openai_client(
             model=model,
             api_key="test-key",
             max_batch_size=max_batch_size,
+            tokenizer_url=tokenizer_url,
         ),
         vector_dimensions=vector_dimensions,
-        max_input_tokens=8192,
+        max_input_tokens=max_input_tokens,
         max_tokens_per_request=300_000,
         send_dimensions=send_dimensions,
         encoding_format=encoding_format,
     )
     return client, fake_embeddings
+
+
+def _build_tokenizing_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[_EmbeddingClient, FakeOpenAIEmbeddingsAPI, FakeTokenizerClient]:
+    """An OpenAI-transport client whose 64-token context leaves a fit limit of 48."""
+    tokenizers: list[FakeTokenizerClient] = []
+
+    def _make_tokenizer(**kwargs: Any) -> FakeTokenizerClient:
+        tokenizer = FakeTokenizerClient(**kwargs)
+        tokenizers.append(tokenizer)
+        return tokenizer
+
+    monkeypatch.setattr("httpx.AsyncClient", _make_tokenizer)
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="bge-m3",
+        send_dimensions=False,
+        vector_dimensions=8,
+        max_input_tokens=64,
+        tokenizer_url="http://llama-server:8080",
+    )
+    return client, fake, tokenizers[0]
+
+
+@pytest.mark.asyncio
+async def test_openai_embed_cuts_query_to_server_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake, tokenizer = _build_tokenizing_client(monkeypatch)
+
+    await client.embed("a" * 100)
+
+    assert fake.calls[0]["input"] == ["a" * 48]
+    assert tokenizer.calls == ["/tokenize", "/detokenize"]
+
+
+@pytest.mark.asyncio
+async def test_openai_batch_embed_tokenizes_only_inputs_past_half_the_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake, tokenizer = _build_tokenizing_client(monkeypatch)
+
+    await client.simple_batch_embed(["a" * 24, "b" * 40, "c" * 60])
+
+    assert fake.calls[0]["input"] == ["a" * 24, "b" * 40, "c" * 48]
+    assert tokenizer.calls == ["/tokenize", "/tokenize", "/detokenize"]
+
+
+@pytest.mark.asyncio
+async def test_openai_embed_cuts_input_over_the_client_token_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake, _ = _build_tokenizing_client(monkeypatch)
+    over_limit = "hello world " * 40
+    assert len(client.encoding.encode(over_limit)) > 64
+
+    await client.embed(over_limit)
+    await client.simple_batch_embed([over_limit])
+
+    assert [call["input"] for call in fake.calls] == [
+        [over_limit[:48]],
+        [over_limit[:48]],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_embed_sends_input_whole_without_tokenizer_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="bge-m3",
+        send_dimensions=False,
+        vector_dimensions=8,
+        max_input_tokens=64,
+    )
+
+    await client.embed("a" * 100)
+
+    assert client.tokenizer is None
+    assert fake.calls[0]["input"] == ["a" * 100]
 
 
 @pytest.mark.asyncio
@@ -1105,6 +1211,18 @@ def test_embedding_model_config_parses_timeout_from_env(
 
     resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
     assert resolved.timeout == 90.0
+
+
+def test_embedding_model_config_parses_tokenizer_url_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _build_embedding_settings(
+        {"EMBEDDING_MODEL_CONFIG__TOKENIZER_URL": "http://llama-server:8080"},
+        monkeypatch,
+    )
+
+    resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
+    assert resolved.tokenizer_url == "http://llama-server:8080"
 
 
 def test_embedding_model_config_rejects_invalid_timeout() -> None:

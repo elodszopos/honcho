@@ -17,7 +17,6 @@ from sqlalchemy.sql.functions import func
 from src import models, schemas
 from src.config import settings
 from src.crud.collection import get_or_create_collection
-from src.crud.hnsw import widen_hnsw_scan
 from src.crud.peer import get_peer, reject_scope_observed
 from src.crud.session import get_session
 from src.dependencies import tracked_db
@@ -580,7 +579,6 @@ async def _query_documents_per_thought(
         return []
 
     async def _run(session: AsyncSession) -> list[models.Document]:
-        await widen_hnsw_scan(session)
         best: dict[str, float] = {}
         rows: dict[str, models.Document] = {}
         for vector in embeddings:

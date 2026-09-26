@@ -396,6 +396,8 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     max_batch_size: Annotated[int, Field(gt=0)] | None = None
     # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
     timeout: float | None = None
+    # llama.cpp server root; its tokenizer cuts inputs to MAX_INPUT_TOKENS before sending.
+    tokenizer_url: str | None = None
 
     @field_validator("timeout", mode="before")
     @classmethod
@@ -442,6 +444,7 @@ class EmbeddingModelConfig(BaseModel):
     max_batch_size: Annotated[int, Field(gt=0)] | None = None
     # Client HTTP timeout in seconds. OpenAI receives seconds; Gemini converts to ms.
     timeout: float | None = None
+    tokenizer_url: str | None = None
 
     @field_validator("timeout", mode="before")
     @classmethod
@@ -575,6 +578,7 @@ def resolve_embedding_model_config(
         base_url=configured.overrides.base_url,
         max_batch_size=configured.max_batch_size,
         timeout=configured.timeout,
+        tokenizer_url=configured.tokenizer_url,
     )
 
 
