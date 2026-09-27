@@ -132,6 +132,7 @@ def test_conclusions_from_the_other_peer_count_once_the_user_accepted_them() -> 
     assert "A conclusion may come from any peer's message." in prompt
     assert "agreed, built on it, or continued without contradicting it" in prompt
     assert "At least one cited message is the user's." in prompt
+    assert "`reason_for_entry` as one clause under 120 characters" in prompt
     assert "assistant-stated, user accepted; cite both messages" in prompt
 
 
@@ -163,7 +164,18 @@ def test_rules_go_to_the_system_turn_and_the_batch_to_the_user_turn() -> None:
     assert "NEVER EXTRACT:" in system["content"]
     assert "MANDATORY LOOK-BEFORE-WRITE ADMISSION:" in system["content"]
     assert "Prefer concrete timeline facts." in system["content"]
-    assert system["content"].endswith("## USER.md\nAlice is vegetarian.")
+    content = system["content"]
+    assert content.index("## USER.md\nAlice is vegetarian.") < content.index(
+        "MANDATORY LOOK-BEFORE-WRITE ADMISSION:"
+    )
+    assert content.rstrip().endswith("overstates or misattributes the source.")
+    extraction_system, _ = deriver_messages(
+        peer_id="alice",
+        messages="alice: hello",
+        custom_instructions="Prefer concrete timeline facts.",
+        curated_memory="## USER.md\nAlice is vegetarian.",
+    )
+    assert content.startswith(extraction_system["content"])
     assert "REFERENCE, NEVER A SOURCE:" in system["content"]
     assert "Never extract a fact the USER.md block already states." in system["content"]
     assert "Extract nothing from it" in system["content"]

@@ -104,7 +104,8 @@ class ExplicitObservationBase(BaseModel):
     )
     reason_for_entry: str = Field(
         min_length=1,
-        description="Specific justification for why this memory passes admission and is worth retaining.",
+        max_length=120,
+        description="One clause: what this memory is for.",
     )
 
     @field_validator("target_id", mode="after")

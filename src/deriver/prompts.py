@@ -84,7 +84,7 @@ _ADMISSION_RULES = c(
     - Never target a conclusion id that is absent from that admission case.
     - Copy the case's `admission_case_id` into its decision.
     - Return at most one decision per admission case.
-    - Supply a specific `reason_for_entry` naming what the conclusion is for and why it lasts.
+    - Write `reason_for_entry` as one clause under 120 characters: what the memory is for.
     - Return no decision for a case when the messages do not justify durable memory.
     - Return all admitted cases together in one `explicit` list.
 
@@ -116,8 +116,9 @@ def deriver_system_prompt(
     admission: bool = False,
     curated_memory: str = "",
 ) -> str:
-    """The static rules for extraction, or for admission; custom instructions and the user's
-    curated memory close the block so the cached prefix survives their edits longest."""
+    """The static rules, then custom instructions and the user's curated memory, then the admission
+    rules when this is the admission pass: both passes of a batch share one cached prefix through
+    the curated memory, and an edit to it busts only what follows the edited line."""
     sections = [
         c(
             f"""
@@ -209,14 +210,14 @@ NOTHING, explicit: [] is the correct output:
 """
         )
     ]
-    if admission:
-        sections.append(_ADMISSION_RULES)
     custom = _custom_instructions_section(custom_instructions)
     if custom:
         sections.append(custom)
     if curated_memory:
         sections.append(_CURATED_MEMORY_RULES)
         sections.append(curated_memory)
+    if admission:
+        sections.append(_ADMISSION_RULES)
     return "\n\n".join(sections)
 
 
