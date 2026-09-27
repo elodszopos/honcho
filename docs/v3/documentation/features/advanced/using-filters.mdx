@@ -768,13 +768,10 @@ bob_explicit = peer.conclusions_of("bob").list(filters={"level": "explicit"})
       filters: { level: { in: ["deductive", "inductive"] } }
     });
 
-    // Same filtering on semantic search (query, topK, distance, filters)
-    const results = await peer.conclusions.query(
-      "food preferences",
-      10,
-      undefined,
-      { level: "deductive" }
-    );
+    // Same filtering on semantic search
+    const results = await peer.conclusions.query("food preferences", {
+      filters: { level: "deductive" }
+    });
 
     // Conclusions about another peer, explicit only
     const bobExplicit = await peer.conclusionsOf("bob").list({

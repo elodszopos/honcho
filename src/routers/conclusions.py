@@ -137,6 +137,7 @@ async def query_conclusions(
             max_distance=body.distance,
             top_k=body.top_k,
             per_thought=body.per_thought,
+            exclude_ids=body.exclude_ids,
         )
     return [schemas.ConclusionMatch.model_validate(doc) for doc in documents]
 

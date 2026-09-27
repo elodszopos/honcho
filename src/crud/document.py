@@ -1,7 +1,8 @@
 import asyncio
 import datetime
+import hashlib
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from logging import getLogger
@@ -15,6 +16,7 @@ from sqlalchemy.sql import ColumnElement, Select
 from sqlalchemy.sql.functions import func
 
 from src import models, schemas
+from src.cache.client import cache as cache_client
 from src.config import settings
 from src.crud.collection import get_or_create_collection
 from src.crud.peer import get_peer, reject_scope_observed
@@ -355,6 +357,25 @@ async def query_external_vector_document_ids(
     return [result.id for result in vector_results]
 
 
+async def source_message_ids(
+    db: AsyncSession,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    document_ids: list[str],
+) -> set[int]:
+    """Every message id the named conclusions rest on."""
+    if not document_ids:
+        return set()
+    documents = await fetch_documents_by_ids(
+        db, workspace_name, observer, observed, document_ids
+    )
+    sources: set[int] = set()
+    for document in documents:
+        sources.update(_message_sources(document.internal_metadata))
+    return sources
+
+
 async def fetch_documents_by_ids(
     db: AsyncSession,
     workspace_name: str,
@@ -392,6 +413,7 @@ async def _query_documents_pgvector(
     filters: dict[str, Any] | None,
     max_distance: float | None,
     top_k: int,
+    exclude_ids: Collection[str] | None = None,
 ) -> list[models.Document]:
     """pgvector similarity search — pure DB operation; each document carries its
     cosine distance as a transient ``distance`` attribute."""
@@ -407,6 +429,8 @@ async def _query_documents_pgvector(
 
     if max_distance is not None:
         stmt = stmt.where(distance <= max_distance)
+    if exclude_ids:
+        stmt = stmt.where(models.Document.id.notin_(list(exclude_ids)))
 
     stmt = apply_filter(stmt, models.Document, filters)
     ranked = (
@@ -433,6 +457,7 @@ async def query_documents(
     top_k: int = 5,
     embedding: list[float] | None = None,
     per_thought: bool = False,
+    exclude_ids: Collection[str] | None = None,
 ) -> Sequence[models.Document]:
     """
     Query documents using semantic similarity.
@@ -453,6 +478,7 @@ async def query_documents(
         embedding: Optional pre-computed embedding for the query (avoids extra API call if possible)
         per_thought: Search each thought of the query on its own and rank a document
             at its best distance
+        exclude_ids: Documents left out inside the query, so they never take a slot
 
     Returns:
         Sequence of matching documents
@@ -460,7 +486,12 @@ async def query_documents(
     if top_k <= 0:
         return []
 
-    if per_thought and _uses_pgvector():
+    if per_thought:
+        if not _uses_pgvector():
+            raise VectorStoreError(
+                "per-thought conclusion search needs the pgvector store; "
+                f"VECTOR_STORE.TYPE={settings.VECTOR_STORE.TYPE} is migrated"
+            )
         return await _query_documents_per_thought(
             db,
             workspace_name,
@@ -470,6 +501,7 @@ async def query_documents(
             filters=filters,
             max_distance=max_distance,
             top_k=top_k,
+            exclude_ids=exclude_ids,
         )
 
     # Use provided embedding or generate one
@@ -494,6 +526,7 @@ async def query_documents(
                 filters,
                 max_distance,
                 top_k,
+                exclude_ids,
             )
         async with tracked_db("query_documents.pgvector", read_only=True) as managed_db:
             docs = await _query_documents_pgvector(
@@ -505,6 +538,7 @@ async def query_documents(
                 filters,
                 max_distance,
                 top_k,
+                exclude_ids,
             )
             for doc in docs:
                 managed_db.expunge(doc)
@@ -548,18 +582,43 @@ async def query_documents(
 
 
 async def embed_thoughts(query: str) -> list[list[float]]:
-    """One embedding per thought of ``query``, in order; empty when the query is blank."""
+    """One embedding per thought of ``query``, in order; empty when the query is blank. A thought
+    embedded within ``EMBEDDING.THOUGHT_CACHE_SECONDS`` reuses its vector."""
     thoughts = split_thoughts(query)
     if not thoughts:
         return []
-    embedded = await embedding_client.batch_embed(
-        {str(index): thought for index, thought in enumerate(thoughts)}
+    ttl = settings.EMBEDDING.THOUGHT_CACHE_SECONDS
+    keys = [_thought_cache_key(thought) for thought in thoughts]
+    vectors: dict[int, list[float]] = {}
+    if ttl > 0:
+        for index, key in enumerate(keys):
+            cached = await cache_client.get(key)
+            if cached:
+                vectors[index] = cached
+    missing = {
+        str(index): thought
+        for index, thought in enumerate(thoughts)
+        if index not in vectors
+    }
+    if missing:
+        embedded = await embedding_client.batch_embed(missing)
+        for index_text, chunks in embedded.items():
+            if chunks:
+                index = int(index_text)
+                vectors[index] = chunks[0]
+                if ttl > 0:
+                    await cache_client.set(keys[index], chunks[0], expire=ttl)
+    logger.info(
+        "documents.embed_thoughts: thoughts=%d embedded=%d reused=%d",
+        len(thoughts),
+        len(missing),
+        len(thoughts) - len(missing),
     )
-    return [
-        vectors[0]
-        for _, vectors in sorted(embedded.items(), key=lambda item: int(item[0]))
-        if vectors
-    ]
+    return [vectors[index] for index in sorted(vectors)]
+
+
+def _thought_cache_key(thought: str) -> str:
+    return f"thought:{hashlib.sha256(thought.encode('utf-8')).hexdigest()}"
 
 
 async def _query_documents_per_thought(
@@ -572,6 +631,7 @@ async def _query_documents_per_thought(
     filters: dict[str, Any] | None,
     max_distance: float | None,
     top_k: int,
+    exclude_ids: Collection[str] | None = None,
 ) -> list[models.Document]:
     """Each thought of ``query`` searched on its own; a document ranks at its best distance."""
     embeddings = await embed_thoughts(query)
@@ -591,6 +651,7 @@ async def _query_documents_per_thought(
                 filters,
                 max_distance,
                 top_k,
+                exclude_ids,
             ):
                 distance = float(doc.distance)
                 if doc.id not in best or distance < best[doc.id]:

@@ -184,7 +184,8 @@ async def process_representation_tasks_batch(
     )
 
     # Track token usage - count only tokens from messages being processed
-    prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions)
+    curated_memory = curated_memory_block(latest_message.workspace_name)
+    prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions, curated_memory)
     queue_item_message_ids_set = set(queue_item_message_ids)
     messages_tokens = sum(
         msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
@@ -196,8 +197,19 @@ async def process_representation_tasks_batch(
             DeriverComponents.MESSAGES: messages_tokens,
         },
     )
+    estimated_input_tokens = prompt_tokens + sum(msg.token_count for msg in messages)
+    if estimated_input_tokens > settings.DERIVER.MAX_INPUT_TOKENS:
+        logger.warning(
+            "deriver.batch over_cap: workspace=%s session=%s observed=%s estimated_input_tokens=%d max_input_tokens=%d prompt_scaffold_tokens=%d prompt_messages=%d",
+            latest_message.workspace_name,
+            latest_message.session_name,
+            observed,
+            estimated_input_tokens,
+            settings.DERIVER.MAX_INPUT_TOKENS,
+            prompt_tokens,
+            len(messages),
+        )
 
-    curated_memory = curated_memory_block(latest_message.workspace_name)
     extraction_messages = deriver_messages(
         peer_id=observed,
         messages=formatted_messages,

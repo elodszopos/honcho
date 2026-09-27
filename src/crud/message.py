@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from logging import getLogger
 from typing import Any
@@ -12,6 +12,7 @@ from src import models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.exceptions import VectorStoreError
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
@@ -1021,13 +1022,23 @@ async def search_message_snippets(
     session_allowlist: list[str] | None = None,
     exclude_session_name: str | None = None,
     min_chars: int = 0,
+    max_distance: float | None = None,
+    exclude_message_ids: Collection[int] | None = None,
 ) -> tuple[list[tuple[list[models.Message], list[models.Message]]], dict[str, float]]:
     """Snippets around the messages closest to any of ``embeddings``, each message ranked at its
     best distance, closest first. The second value maps each matched message id to that distance.
-    ``exclude_session_name`` and ``min_chars`` filter inside the query, so they never eat result slots.
+    ``exclude_session_name``, ``min_chars``, ``max_distance`` and ``exclude_message_ids`` filter
+    inside the query, so they never eat result slots; an excluded message is dropped from a
+    neighbour's context too. Needs the pgvector store.
     """
     if not embeddings or limit <= 0:
         return [], {}
+    excluded_ids = set(exclude_message_ids or ())
+    if settings.VECTOR_STORE.TYPE != "pgvector" and settings.VECTOR_STORE.MIGRATED:
+        raise VectorStoreError(
+            "per-thought message search needs the pgvector store; "
+            f"VECTOR_STORE.TYPE={settings.VECTOR_STORE.TYPE} is migrated"
+        )
     allowed_session_names, deny = await resolve_session_scope(
         None,
         workspace_name,
@@ -1038,28 +1049,6 @@ async def search_message_snippets(
     )
     if deny:
         return [], {}
-
-    if settings.VECTOR_STORE.TYPE != "pgvector" and settings.VECTOR_STORE.MIGRATED:
-        snippets = await _semantic_search_messages(
-            workspace_name,
-            None,
-            query_embedding=embeddings[0],
-            limit=limit,
-            context_window=context_window,
-            operation_name="message.search_snippets",
-            observer=observer,
-            session_allowlist=session_allowlist,
-        )
-        kept = [
-            snippet
-            for snippet in snippets
-            if not (
-                exclude_session_name
-                and snippet[1]
-                and snippet[1][0].session_name == exclude_session_name
-            )
-        ]
-        return kept[:limit], {}
 
     best: dict[str, tuple[float, models.Message]] = {}
     async with tracked_db("message.search_snippets", read_only=True) as db:
@@ -1086,6 +1075,10 @@ async def search_message_snippets(
                 )
             if min_chars > 0:
                 stmt = stmt.where(func.length(models.Message.content) >= min_chars)
+            if max_distance is not None:
+                stmt = stmt.where(distance <= max_distance)
+            if excluded_ids:
+                stmt = stmt.where(models.Message.id.notin_(excluded_ids))
             for message, value in (await db.execute(stmt)).all():
                 value = float(value)
                 current = best.get(message.public_id)
@@ -1095,6 +1088,14 @@ async def search_message_snippets(
         snippets = await _build_merged_snippets(
             db, workspace_name, [message for _, message in ranked], context_window
         )
+        if excluded_ids:
+            snippets = [
+                (
+                    matches,
+                    [message for message in context if message.id not in excluded_ids],
+                )
+                for matches, context in snippets
+            ]
         _expunge_snippets(db, snippets)
     return snippets, {message.public_id: value for value, message in ranked}
 

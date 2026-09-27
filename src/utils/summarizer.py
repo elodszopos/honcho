@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import Iterable
 from dataclasses import replace
 from enum import Enum
 from functools import cache
@@ -8,7 +9,7 @@ from inspect import cleandoc as c
 from typing import TypedDict
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
@@ -803,6 +804,33 @@ async def get_summary(
     if not summaries or summary_type.value not in summaries:
         return None
     return summaries[summary_type.value]
+
+
+async def get_summaries(
+    db: AsyncSession,
+    workspace_name: str,
+    session_names: Iterable[str],
+    summary_type: SummaryType = SummaryType.SHORT,
+) -> dict[str, Summary]:
+    """One summary of ``summary_type`` per named session that has one, in one query."""
+    names = sorted(set(session_names))
+    if not names:
+        return {}
+    rows = (
+        await db.execute(
+            select(models.Session.name, models.Session.internal_metadata).where(
+                models.Session.workspace_name == workspace_name,
+                models.Session.name.in_(names),
+            )
+        )
+    ).all()
+    found: dict[str, Summary] = {}
+    for name, internal_metadata in rows:
+        summaries: dict[str, Summary] = (internal_metadata or {}).get(SUMMARIES_KEY, {})
+        summary = summaries.get(summary_type.value)
+        if summary:
+            found[name] = summary
+    return found
 
 
 async def get_both_summaries(

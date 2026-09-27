@@ -831,6 +831,10 @@ class EmbeddingSettings(HonchoSettings):
     # saturated, message creation skips the fast path entirely and the
     # reconciler embeds on its next cycle. 0 disables the fast path.
     MAX_PENDING_EMBED_TASKS: Annotated[int, Field(default=50, ge=0)] = 50
+    # Search text splits into thoughts; a fragment under this length joins the thought before it.
+    THOUGHT_MIN_CHARS: Annotated[int, Field(default=20, ge=1)] = 20
+    # A thought's vector is reused within this window; 0 embeds every time.
+    THOUGHT_CACHE_SECONDS: Annotated[int, Field(default=120, ge=0)] = 120
 
     @model_validator(mode="before")
     @classmethod
@@ -1142,6 +1146,11 @@ class DialecticSettings(HonchoSettings):
     SESSION_HISTORY_MAX_TOKENS: Annotated[
         int, Field(default=4_096, ge=0, le=16_384)
     ] = 4_096
+
+    # Automatic mode: an excerpt message is cut at its last sentence end within this many chars.
+    AUTOMATIC_EXCERPT_MESSAGE_CHARS: Annotated[int, Field(default=400, gt=0)] = 400
+    # Automatic mode: messages shorter than this never become excerpts.
+    AUTOMATIC_EXCERPT_MIN_MESSAGE_CHARS: Annotated[int, Field(default=40, ge=0)] = 40
 
     @model_validator(mode="before")
     @classmethod

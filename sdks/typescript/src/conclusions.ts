@@ -55,6 +55,14 @@ function rejectReservedFilterKeys(
   }
 }
 
+export interface ConclusionQueryOptions {
+  topK?: number
+  distance?: number
+  filters?: Record<string, unknown>
+  perThought?: boolean
+  excludeIds?: string[]
+}
+
 /**
  * Parameters for creating a conclusion.
  */
@@ -280,6 +288,7 @@ export class ConclusionsView {
     top_k?: number
     distance?: number
     per_thought?: boolean
+    exclude_ids?: string[]
     filters?: Record<string, unknown>
   }): Promise<ConclusionResponse[]> {
     await this._ensureWorkspace()
@@ -454,28 +463,27 @@ export class ConclusionsView {
    * Semantic search for conclusions in this view.
    *
    * @param query - The search query string
-   * @param topK - Maximum number of results to return (default: 10)
-   * @param distance - Maximum cosine distance threshold (0.0-1.0)
-   * @param filters - Optional additional filter criteria, merged with this
+   * @param options.topK - Maximum number of results to return (default: 10)
+   * @param options.distance - Maximum cosine distance threshold (0.0-1.0)
+   * @param options.filters - Optional additional filter criteria, merged with this
    *   view's observer/observed. Supports the same operators as the list
    *   endpoint — e.g. `{ level: 'deductive' }` to search only conclusions
    *   derived during dreaming. See
    *   https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
-   * @param perThought - Search each thought of the query on its own, rank at best distance
+   * @param options.perThought - Search each thought of the query on its own, rank at best distance
    */
   async query(
     query: string,
-    topK: number = 10,
-    distance?: number,
-    filters?: Record<string, unknown>,
-    perThought?: boolean
+    options: ConclusionQueryOptions = {}
   ): Promise<Conclusion[]> {
+    const { topK = 10, distance, filters, perThought, excludeIds } = options
     rejectReservedFilterKeys(filters, VIEW_RESERVED_KEYS)
     const response = await this._query({
       query,
       top_k: topK,
       distance,
       per_thought: perThought ? true : undefined,
+      exclude_ids: excludeIds && excludeIds.length ? excludeIds : undefined,
       filters: {
         observer_id: this.observer,
         observed_id: this.observed,

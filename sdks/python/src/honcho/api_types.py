@@ -566,14 +566,15 @@ class ConclusionQueryParams(BaseModel):
 
 class AutomaticChatParams(BaseModel):
     """Automatic chat: one prefetch on ``search_text``, one model call, no tools, no peer card;
-    ``exclude_conclusion_ids`` are shown to the model as already known."""
+    the messages behind ``exclude_conclusion_ids`` never become excerpts."""
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     search_text: str = Field(min_length=1, max_length=10000)
-    exclude_conclusion_ids: list[str] = Field(default_factory=list, max_length=200)
+    exclude_conclusion_ids: list[str] = Field(default_factory=list, max_length=1000)
     exclude_session_id: str | None = None
     excerpt_limit: int = Field(default=5, ge=0, le=20)
+    excerpt_max_distance: float | None = Field(default=None, ge=0.0, le=2.0)
     max_answer_chars: int = Field(default=900, ge=100, le=5000)
 
 

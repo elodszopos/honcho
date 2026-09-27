@@ -45,7 +45,7 @@ describe('Conclusion query distance', () => {
       operatorConclusion('User keeps paper receipts in a shoebox', session),
     ])
 
-    const results = await peer.conclusions.query('food preferences', 3)
+    const results = await peer.conclusions.query('food preferences', { topK: 3 })
 
     expect(results.length).toBeGreaterThan(0)
     const distances = results.map((conclusion) => conclusion.distance)
@@ -68,10 +68,7 @@ describe('Conclusion query distance', () => {
 
     const results = await peer.conclusions.query(
       'what food do they like?\nand where do they run?',
-      2,
-      undefined,
-      undefined,
-      true
+      { topK: 2, perThought: true }
     )
 
     expect(results.length).toBe(2)

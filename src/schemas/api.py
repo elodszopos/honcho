@@ -756,6 +756,11 @@ class ConclusionQuery(BaseModel):
             "best distance"
         ),
     )
+    exclude_ids: list[str] = Field(
+        default_factory=list,
+        max_length=1000,
+        description="Conclusion ids left out inside the query, so they never take a result slot",
+    )
     filters: dict[str, Any] | None = Field(
         default=None,
         description="Additional filters to apply",
@@ -1049,10 +1054,10 @@ class AutomaticChatOptions(BaseModel):
     ]
     exclude_conclusion_ids: list[str] = Field(
         default_factory=list,
-        max_length=200,
+        max_length=1000,
         description=(
-            "Conclusions the assistant already holds: left out of the prefetch "
-            "and shown to the model as known, never to be restated."
+            "Conclusions the assistant already holds: the messages they rest on "
+            "never become excerpts."
         ),
     )
     exclude_session_id: str | None = Field(
@@ -1064,6 +1069,15 @@ class AutomaticChatOptions(BaseModel):
         ge=0,
         le=20,
         description="Past-chat excerpts prefetched on the search text",
+    )
+    excerpt_max_distance: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Cosine distance a past message must be within, from its best thought, "
+            "to become an excerpt; unset searches without a floor"
+        ),
     )
     max_answer_chars: int = Field(
         default=900,

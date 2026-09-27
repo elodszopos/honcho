@@ -18,6 +18,7 @@ from src.config import settings
 from src.startup.embedding_validator import (
     StartupValidationError,
     _assert_pgvector_dims_match,  # pyright: ignore[reportPrivateUsage]
+    _assert_pgvector_version,  # pyright: ignore[reportPrivateUsage]
     validate_embedding_schema,
 )
 
@@ -111,6 +112,26 @@ async def test_validator_fails_closed_when_introspection_keeps_failing(
         await validate_embedding_schema(engine=AsyncMock())
 
     assert call_count == 3, "should exhaust the retry budget before failing"
+
+
+@pytest.mark.parametrize("version", ["0.8.0", "0.8.2", "1.0.0"])
+def test_assert_pgvector_version_accepts_iterative_scan_capable_builds(
+    version: str,
+) -> None:
+    _assert_pgvector_version(version)
+
+
+@pytest.mark.parametrize("version", ["0.7.4", "0.5.1"])
+def test_assert_pgvector_version_names_the_installed_and_required_builds(
+    version: str,
+) -> None:
+    with pytest.raises(StartupValidationError, match=rf"pgvector {version} .* 0\.8\.0"):
+        _assert_pgvector_version(version)
+
+
+def test_assert_pgvector_version_requires_the_extension() -> None:
+    with pytest.raises(StartupValidationError, match="not installed"):
+        _assert_pgvector_version(None)
 
 
 # ---------------------------------------------------------------------------

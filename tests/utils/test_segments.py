@@ -2,7 +2,8 @@
 
 import pytest
 
-from src.utils.segments import MAX_SEGMENTS, split_thoughts
+from src.config import settings
+from src.utils.segments import split_thoughts
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +45,20 @@ def test_blank_input_yields_nothing_and_a_bare_word_yields_itself():
     assert split_thoughts("ok") == ["ok"]
 
 
-def test_thoughts_are_capped():
-    text = "\n".join(f"thought number {i} stands on its own line." for i in range(30))
+def test_every_thought_of_a_long_text_survives():
+    text = "\n".join(f"thought number {i} stands on its own line." for i in range(60))
 
-    assert len(split_thoughts(text)) == MAX_SEGMENTS
+    assert len(split_thoughts(text)) == 60
+
+
+def test_the_fragment_floor_comes_from_settings(monkeypatch: pytest.MonkeyPatch):
+    text = "Then a proper sentence follows it here. A tiny bit."
+
+    monkeypatch.setattr(settings.EMBEDDING, "THOUGHT_MIN_CHARS", 1)
+    assert split_thoughts(text) == [
+        "Then a proper sentence follows it here.",
+        "A tiny bit.",
+    ]
+    assert split_thoughts(text, min_chars=20) == [
+        "Then a proper sentence follows it here. A tiny bit."
+    ]

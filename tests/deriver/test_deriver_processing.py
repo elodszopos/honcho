@@ -349,7 +349,7 @@ class TestDeriverProcessing:
             )
 
         mock_estimate_prompt_tokens.assert_called_once_with(
-            "Prefer explicit facts with dates."
+            "Prefer explicit facts with dates.", ""
         )
         mock_prompt.assert_called_once()
         assert (

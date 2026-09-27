@@ -205,6 +205,16 @@ model = "gpt-5.4-mini"
 [curated_memory]
 # PATHS = { hermes = "/memories/USER.md" }
 
+# Thought splitting for per-thought searches (search text splits into lines, then sentences)
+# [embedding]
+# THOUGHT_MIN_CHARS = 20          # a shorter fragment joins the thought before it
+# THOUGHT_CACHE_SECONDS = 120     # a thought's vector is reused within this window
+
+# Automatic dialectic mode (the Hermes lane answer)
+# [dialectic]
+# AUTOMATIC_EXCERPT_MESSAGE_CHARS = 400      # an excerpt message is cut at a sentence end within this
+# AUTOMATIC_EXCERPT_MIN_MESSAGE_CHARS = 40   # shorter messages never become excerpts
+
 # Summary settings
 [summary]
 ENABLED = true

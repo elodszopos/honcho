@@ -518,9 +518,10 @@ export const ChatQuerySchema = z
     automatic: z
       .object({
         searchText: z.string().min(1).max(10000),
-        excludeConclusionIds: z.array(z.string()).max(200).optional(),
+        excludeConclusionIds: z.array(z.string()).max(1000).optional(),
         excludeSessionId: z.string().optional(),
         excerptLimit: z.number().int().min(0).max(20).optional(),
+        excerptMaxDistance: z.number().min(0).max(2).optional(),
         maxAnswerChars: z.number().int().min(100).max(5000).optional(),
       })
       .strict()

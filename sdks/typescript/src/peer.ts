@@ -113,6 +113,7 @@ export interface AutomaticChatOptions {
   excludeConclusionIds?: string[]
   excludeSessionId?: string
   excerptLimit?: number
+  excerptMaxDistance?: number
   maxAnswerChars?: number
 }
 
@@ -127,6 +128,7 @@ function toAutomaticBody(
     exclude_conclusion_ids: options.excludeConclusionIds,
     exclude_session_id: options.excludeSessionId,
     excerpt_limit: options.excerptLimit,
+    excerpt_max_distance: options.excerptMaxDistance,
     max_answer_chars: options.maxAnswerChars,
   }
 }

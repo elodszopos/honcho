@@ -6,6 +6,7 @@ export { Honcho } from './client'
 export {
   Conclusion,
   type ConclusionCreateParams,
+  type ConclusionQueryOptions,
   ConclusionLineage,
   /**
    * @deprecated Renamed to `ConclusionsView`. "Scope" now means a named set of

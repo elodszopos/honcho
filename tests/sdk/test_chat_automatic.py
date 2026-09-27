@@ -15,6 +15,7 @@ OPTIONS: dict[str, Any] = {
     "exclude_conclusion_ids": ["c-1", "c-2"],
     "exclude_session_id": "thread-1",
     "excerpt_limit": 3,
+    "excerpt_max_distance": 0.6,
     "max_answer_chars": 600,
 }
 
@@ -69,7 +70,8 @@ def test_chat_without_automatic_forwards_none(
         {"search_text": "reminder job", "unknown_field": 1},
         {"search_text": ""},
         {"search_text": "reminder job", "excerpt_limit": 21},
-        {"search_text": "reminder job", "exclude_conclusion_ids": ["c"] * 201},
+        {"search_text": "reminder job", "excerpt_max_distance": 2.5},
+        {"search_text": "reminder job", "exclude_conclusion_ids": ["c"] * 1001},
     ],
 )
 def test_invalid_options_are_refused_before_the_request(

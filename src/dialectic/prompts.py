@@ -345,7 +345,6 @@ CONSUMER:
 
 ## CONTEXT BLOCKS
 
-- `Known to the assistant`: conclusions the assistant already holds.
 - `Earlier threads`: excerpts from other conversations, each under its thread's summary when one exists.
 - `Query`: the assistant's labeled question: recent turns, the current message, lines already reported, the task.
 - `USER.md`, when it closes this prompt: what the assistant already knows about '{observed}'.
@@ -358,7 +357,7 @@ CONSUMER:
 - Start a bullet with the thread's date when the excerpt carries one.
 - Report only what `Earlier threads` states.
 - Never describe the current message, the query, this context, or what it lacks.
-- Never restate a known conclusion, an already-reported line, or a fact `USER.md` states.
+- Never restate an already-reported line or a fact `USER.md` states.
 - Give no advice; use no second person; ask no question.
 - Keep the whole answer under {max_answer_chars} characters.
 - Answer with the single word NONE when nothing in the context bears on the current message.

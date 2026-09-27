@@ -7,7 +7,7 @@ NO peer card instructions, NO working representation - just extract observations
 
 import re
 from datetime import datetime
-from functools import cache
+from functools import lru_cache
 from inspect import cleandoc as c
 from typing import Any
 
@@ -104,6 +104,7 @@ _CURATED_MEMORY_RULES = c(
     REFERENCE, NEVER A SOURCE:
     - The USER.md block below is what the assistant already knows about the user.
     - Use it only to recognise a fact that is already held.
+    - Never extract a fact the USER.md block already states.
     - Extract nothing from it; every conclusion comes from the <messages> block alone.
     """
 )
@@ -172,7 +173,6 @@ NEVER EXTRACT:
 - Text copied from tool output or a report.
   - Extract the finding, not the transcript.
 - Guesses: anything that needs "likely" or "probably"; invented specifics, entities or affiliations.
-- A fact the `USER.md` block at the end of these rules already states.
 - Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle or party, current location, trip-only decisions.
   - This holds after the trip ends: durable travel history belongs to the authoritative trip project.
   - This exclusion is specific to travel trips and never covers a software, home or other non-travel outcome.
@@ -308,28 +308,30 @@ def minimal_deriver_prompt(
     )
 
 
-@cache
+@lru_cache(maxsize=16)
+def _estimate_scaffold_tokens(
+    custom_instructions: str | None, curated_memory: str
+) -> int:
+    return estimate_tokens(
+        minimal_deriver_prompt(
+            peer_id="",
+            messages="",
+            custom_instructions=custom_instructions,
+            curated_memory=curated_memory,
+        )
+    )
+
+
 def estimate_minimal_deriver_prompt_tokens() -> int:
     """Estimate the static minimal deriver prompt without custom instructions."""
-    prompt = minimal_deriver_prompt(
-        peer_id="",
-        messages="",
-        custom_instructions=None,
-    )
-    return estimate_tokens(prompt)
+    return _estimate_scaffold_tokens(None, "")
 
 
-def estimate_deriver_prompt_tokens(custom_instructions: str | None) -> int:
-    """Estimate minimal deriver prompt tokens, including custom instructions if present."""
-    normalized_custom_instructions = _normalized_custom_instructions(
-        custom_instructions
+def estimate_deriver_prompt_tokens(
+    custom_instructions: str | None, curated_memory: str = ""
+) -> int:
+    """Tokens of everything in the prompt but the batch: the rules, the custom instructions and
+    the curated memory block."""
+    return _estimate_scaffold_tokens(
+        _normalized_custom_instructions(custom_instructions), curated_memory
     )
-    if normalized_custom_instructions is None:
-        return estimate_minimal_deriver_prompt_tokens()
-
-    prompt = minimal_deriver_prompt(
-        peer_id="",
-        messages="",
-        custom_instructions=normalized_custom_instructions,
-    )
-    return estimate_tokens(prompt)

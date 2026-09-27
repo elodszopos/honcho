@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
-from src.dialectic.automatic import AutomaticDialecticAgent
+from src.dialectic.automatic import AutomaticDialecticAgent, cut_at_sentence
 from src.llm import HonchoLLMCallResponse
 from src.utils import summarizer
 from src.utils.evidence import EvidenceAccumulator
@@ -20,6 +20,7 @@ KNOWN = "User has a Google billing account"
 ON_TOPIC = "User monitors Reddit with scheduled digests"
 OTHER = "User reviews pull requests first thing in the morning"
 EARLIER_MESSAGE = "the reddit digest job runs at 9 every morning now"
+KNOWN_SOURCE = "the reddit digest bills to my google billing account by the way"
 CURRENT_MESSAGE = "current thread text about the reddit digest job"
 EARLIER_SUMMARY = "Reviewed the reddit digest job and moved it to 9."
 
@@ -83,6 +84,27 @@ async def automatic_data(
         )
         sessions.append(session)
     earlier, current = sessions
+    known_source = models.Message(
+        workspace_name=workspace.name,
+        session_name=earlier.name,
+        peer_name=peer.name,
+        content=KNOWN_SOURCE,
+        seq_in_session=2,
+        token_count=12,
+    )
+    db_session.add(known_source)
+    await db_session.flush()
+    db_session.add(
+        models.MessageEmbedding(
+            content=KNOWN_SOURCE,
+            message_id=known_source.public_id,
+            workspace_name=workspace.name,
+            session_name=earlier.name,
+            peer_name=peer.name,
+            sync_state="synced",
+            embedding=[0.1] * dims,
+        )
+    )
     await summarizer._save_summary(
         db_session,
         {
@@ -114,6 +136,9 @@ async def automatic_data(
             embedding=[0.1 * (i + 1)] * dims,
             session_name=earlier.name,
             level="explicit",
+            internal_metadata={"message_ids": [known_source.id]}
+            if content == KNOWN
+            else {},
         )
         db_session.add(document)
         documents.append(document)
@@ -181,22 +206,46 @@ class TestAutomaticAgent:
         assert hits[0]["rank"] == 1
         assert hits[0]["ids"] and hits[0]["distances"][0] is not None
 
-    async def test_prefetch_block_carries_known_and_earlier_threads_only(
+    async def test_prefetch_block_carries_earlier_threads_and_no_conclusion_text(
         self, automatic_data: Any
     ):
         agent = make_agent(automatic_data)
         await run_answer(agent)
 
         prompt = agent.messages[-1]["content"]
-        known_block = prompt.split("## Known to the assistant")[1].split("##")[0]
         threads_block = prompt.split("## Earlier threads")[1]
 
-        assert KNOWN in known_block
+        assert "## Known" not in prompt and KNOWN not in prompt
         assert "## Conclusions on topic" not in prompt
         assert ON_TOPIC not in prompt and OTHER not in prompt
         assert EARLIER_MESSAGE in threads_block
         assert f"Summary: {EARLIER_SUMMARY}" in threads_block
         assert CURRENT_MESSAGE not in prompt
+
+    async def test_messages_behind_an_excluded_conclusion_are_no_excerpt_nor_context(
+        self, automatic_data: Any, caplog: pytest.LogCaptureFixture
+    ):
+        caplog.set_level(logging.INFO, logger="src.dialectic.automatic")
+        agent = make_agent(automatic_data)
+        await run_answer(agent)
+
+        prompt = agent.messages[-1]["content"]
+        assert KNOWN_SOURCE not in prompt
+        assert EARLIER_MESSAGE in prompt
+        line = next(
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("dialectic.automatic prefetch:")
+        )
+        assert "excluded_conclusions=1 excluded_messages=1" in line
+
+    async def test_without_exclusions_the_source_message_is_an_excerpt(
+        self, automatic_data: Any
+    ):
+        agent = make_agent(automatic_data, options={"exclude_conclusion_ids": []})
+        await run_answer(agent)
+
+        assert KNOWN_SOURCE in agent.messages[-1]["content"]
 
     async def test_each_thought_of_the_search_text_is_searched(
         self, automatic_data: Any, caplog: pytest.LogCaptureFixture
@@ -227,7 +276,7 @@ class TestAutomaticAgent:
             session_name=earlier.name,
             peer_name=peer.name,
             content="ok reddit",
-            seq_in_session=2,
+            seq_in_session=3,
             token_count=2,
         )
         db_session.add(short)
@@ -315,7 +364,8 @@ class TestAutomaticAgent:
         line = prefetch[0]
         for fragment in (
             "thoughts=1",
-            "known=1",
+            "excluded_conclusions=1",
+            "excluded_messages=1",
             "excerpts=1",
             "summaries=1",
             "exclude_session=True",
@@ -324,10 +374,118 @@ class TestAutomaticAgent:
         assert "outcome=answer" in answers[0]
         assert "outcome=none chars=0" in answers[1]
 
-    async def test_zero_excerpts_prefetch_nothing_but_known(self, automatic_data: Any):
+    async def test_no_excerpts_means_no_model_call(
+        self, automatic_data: Any, caplog: pytest.LogCaptureFixture
+    ):
+        caplog.set_level(logging.INFO, logger="src.dialectic.automatic")
         agent = make_agent(automatic_data, options={"excerpt_limit": 0})
+
+        answer, mock_llm_call = await run_answer(agent)
+
+        assert answer == ""
+        assert mock_llm_call.await_count == 0
+        assert any("outcome=no_context" in r.getMessage() for r in caplog.records), [
+            r.getMessage() for r in caplog.records
+        ]
+
+    async def test_excerpt_caps_come_from_settings(
+        self, automatic_data: Any, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            settings.DIALECTIC, "AUTOMATIC_EXCERPT_MIN_MESSAGE_CHARS", 10_000
+        )
+
+        answer, mock_llm_call = await run_answer(make_agent(automatic_data))
+
+        assert answer == "" and mock_llm_call.await_count == 0
+
+    async def test_excerpt_floor_reaches_the_message_search(
+        self, automatic_data: Any, caplog: pytest.LogCaptureFixture
+    ):
+        caplog.set_level(logging.INFO, logger="src.dialectic.automatic")
+        agent = make_agent(automatic_data, options={"excerpt_max_distance": 0.0001})
+        answer, mock_llm_call = await run_answer(agent)
+
+        assert answer == "" and mock_llm_call.await_count == 0
+        line = next(
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("dialectic.automatic prefetch:")
+        )
+        assert "excerpt_max_distance=0.0001" in line and "excerpts=0" in line
+
+    async def test_long_excerpt_messages_are_cut_at_a_sentence_and_counted(
+        self,
+        automatic_data: Any,
+        db_session: AsyncSession,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        workspace, peer, earlier, _current, _documents = automatic_data
+        first = "The reddit digest job moved to nine after the outage. " * 8
+        body = first.strip() + " The tail sentence should never reach the model."
+        long_message = models.Message(
+            workspace_name=workspace.name,
+            session_name=earlier.name,
+            peer_name=peer.name,
+            content=body,
+            seq_in_session=3,
+            token_count=120,
+        )
+        db_session.add(long_message)
+        await db_session.flush()
+        db_session.add(
+            models.MessageEmbedding(
+                content=body,
+                message_id=long_message.public_id,
+                workspace_name=workspace.name,
+                session_name=earlier.name,
+                peer_name=peer.name,
+                sync_state="synced",
+                embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
+            )
+        )
+        await db_session.commit()
+
+        caplog.set_level(logging.INFO, logger="src.dialectic.automatic")
+        agent = make_agent(automatic_data)
         await run_answer(agent)
 
-        prompt = agent.messages[-1]["content"]
-        assert "## Known to the assistant" in prompt
-        assert "## Earlier threads" not in prompt
+        threads_block = agent.messages[-1]["content"].split("## Earlier threads")[1]
+        assert "The tail sentence should never reach the model." not in threads_block
+        assert "after the outage." in threads_block
+        line = next(
+            r.getMessage()
+            for r in caplog.records
+            if r.getMessage().startswith("dialectic.automatic prefetch:")
+        )
+        assert "excerpts_cut=1" in line
+
+    async def test_prefetch_failure_raises_out_of_the_run(self, automatic_data: Any):
+        agent = make_agent(automatic_data)
+        with (
+            patch(
+                "src.dialectic.automatic.embed_thoughts",
+                new=AsyncMock(side_effect=RuntimeError("embedding service down")),
+            ),
+            pytest.raises(RuntimeError, match="embedding service down"),
+        ):
+            await run_answer(agent)
+
+
+class TestCutAtSentence:
+    def test_short_text_is_untouched(self):
+        assert cut_at_sentence("short. text", 400) == "short. text"
+
+    def test_cut_lands_on_the_last_sentence_end_within_the_limit(self):
+        text = "First sentence. Second sentence! Third one? Fourth goes past the limit."
+        assert (
+            cut_at_sentence(text, 45) == "First sentence. Second sentence! Third one?"
+        )
+
+    def test_a_newline_ends_a_sentence(self):
+        assert (
+            cut_at_sentence("line one\nline two that runs on and on", 12) == "line one"
+        )
+
+    def test_no_sentence_end_falls_back_to_a_hard_cut(self):
+        assert cut_at_sentence("x" * 50, 10) == "x" * 10

@@ -2,20 +2,18 @@
 
 import warnings
 
+from src.config import settings
+
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", SyntaxWarning)
     import pysbd
 
-MIN_SEGMENT_CHARS = 20
-MAX_SEGMENTS = 12
-
 _segmenter = pysbd.Segmenter(language="en", clean=False)
 
 
-def split_thoughts(
-    text: str, *, min_chars: int = MIN_SEGMENT_CHARS, max_segments: int = MAX_SEGMENTS
-) -> list[str]:
+def split_thoughts(text: str, *, min_chars: int | None = None) -> list[str]:
     """Lines split into sentences; a fragment under ``min_chars`` joins the segment before it."""
+    floor = settings.EMBEDDING.THOUGHT_MIN_CHARS if min_chars is None else min_chars
     segments: list[str] = []
     for line in (text or "").splitlines():
         line = line.strip()
@@ -25,11 +23,11 @@ def split_thoughts(
             sentence = sentence.strip()
             if not sentence:
                 continue
-            if segments and len(sentence) < min_chars:
+            if segments and len(sentence) < floor:
                 segments[-1] = f"{segments[-1]} {sentence}"
             else:
                 segments.append(sentence)
     if not segments:
         stripped = (text or "").strip()
         return [stripped] if stripped else []
-    return segments[:max_segments]
+    return segments

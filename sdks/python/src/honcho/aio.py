@@ -2029,6 +2029,7 @@ class ConclusionsViewAio:
         distance: float | None = None,
         *,
         per_thought: bool = False,
+        exclude_ids: list[str] | None = None,
         filters: dict[str, Any] | None = None,
     ) -> list[Conclusion]:
         """Semantic search for conclusions asynchronously.
@@ -2058,6 +2059,8 @@ class ConclusionsViewAio:
             body["distance"] = distance
         if per_thought:
             body["per_thought"] = True
+        if exclude_ids:
+            body["exclude_ids"] = list(exclude_ids)
 
         data = await self._view._honcho._async_http_client.post(
             routes.conclusions_query(self._view.workspace_id),

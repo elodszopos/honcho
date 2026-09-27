@@ -40,6 +40,7 @@ _EMBEDDING_TABLES: tuple[str, ...] = ("documents", "message_embeddings")
 # Retry budget for transient introspection failures. Total wall time is
 # bounded so a sick DB does not hang readiness; fail-closed after exhaustion.
 _RETRY_ATTEMPTS = 3
+_MIN_PGVECTOR_VERSION = (0, 8, 0)
 _RETRY_BACKOFF_SECONDS = 1.0
 
 # Best-effort external sampler bounds.
@@ -75,6 +76,7 @@ async def validate_embedding_schema(
 
     dims = await _introspect_pgvector_dims_with_retry(engine, schema)
     _assert_pgvector_dims_match(dims, schema=schema, target_dim=target_dim)
+    _assert_pgvector_version(await _pgvector_version(engine))
 
     if s.VECTOR_STORE.TYPE in ("turbopuffer", "lancedb", "qdrant"):
         await _sample_external_namespaces(engine, target_dim=target_dim)
@@ -133,6 +135,24 @@ async def _introspect_pgvector_dims_once(
             {"schema": schema, "tables": list(_EMBEDDING_TABLES)},
         )
         return {row.table_name: row.typmod for row in result}
+
+
+async def _pgvector_version(engine: AsyncEngine) -> str | None:
+    query = text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+    async with engine.connect() as conn:
+        return (await conn.execute(query)).scalar_one_or_none()
+
+
+def _assert_pgvector_version(version: str | None) -> None:
+    """The per-connection ``hnsw.iterative_scan`` option exists from pgvector 0.8.0."""
+    if version is None:
+        raise StartupValidationError("pgvector extension is not installed")
+    parts = tuple(int(piece) for piece in version.split(".")[:3] if piece.isdigit())
+    if parts < _MIN_PGVECTOR_VERSION:
+        wanted = ".".join(str(piece) for piece in _MIN_PGVECTOR_VERSION)
+        raise StartupValidationError(
+            f"pgvector {version} is installed; {wanted} or newer is required for hnsw.iterative_scan"
+        )
 
 
 def _assert_pgvector_dims_match(

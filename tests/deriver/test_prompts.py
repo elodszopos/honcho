@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from src.deriver.prompts import (
+    _estimate_scaffold_tokens,  # pyright: ignore[reportPrivateUsage]
     deriver_messages,
     estimate_deriver_prompt_tokens,
     estimate_minimal_deriver_prompt_tokens,
@@ -139,9 +140,7 @@ def test_never_extract_names_secrets_transient_state_and_volatile_values() -> No
 
     assert "NEVER EXTRACT:" in prompt
     assert "Credentials: passwords, API keys, tokens" in prompt
-    assert (
-        "A fact the `USER.md` block at the end of these rules already states." in prompt
-    )
+    assert "USER.md" not in prompt
     assert "Transient state: a status" in prompt
     assert "Values that change often" in prompt
     assert "The stable name, path or job that holds them may be a pointer." in prompt
@@ -166,6 +165,7 @@ def test_rules_go_to_the_system_turn_and_the_batch_to_the_user_turn() -> None:
     assert "Prefer concrete timeline facts." in system["content"]
     assert system["content"].endswith("## USER.md\nAlice is vegetarian.")
     assert "REFERENCE, NEVER A SOURCE:" in system["content"]
+    assert "Never extract a fact the USER.md block already states." in system["content"]
     assert "Extract nothing from it" in system["content"]
     assert 'message_id="7"' in user["content"]
     assert "Alice prefers unsweetened tea." in user["content"]
@@ -189,8 +189,17 @@ def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> 
     assert custom_tokens > base_tokens
 
 
+def test_estimate_deriver_prompt_tokens_counts_the_curated_memory_block() -> None:
+    bare = estimate_deriver_prompt_tokens(None)
+    with_memory = estimate_deriver_prompt_tokens(
+        None, "## USER.md\n" + "The user keeps a list of every ferry they took.\n" * 20
+    )
+
+    assert with_memory > bare
+
+
 def test_estimate_deriver_prompt_tokens_propagates_token_estimation_errors() -> None:
-    estimate_minimal_deriver_prompt_tokens.cache_clear()
+    _estimate_scaffold_tokens.cache_clear()
 
     with patch(
         "src.deriver.prompts.estimate_tokens",

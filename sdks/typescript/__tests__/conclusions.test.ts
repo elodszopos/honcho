@@ -256,7 +256,7 @@ describe('Conclusions', () => {
         )
       )
 
-      const results = await peer.conclusions.query('topic', 3)
+      const results = await peer.conclusions.query('topic', { topK: 3 })
 
       expect(results.length).toBeLessThanOrEqual(3)
     })
@@ -269,11 +269,10 @@ describe('Conclusions', () => {
         operatorConclusion('Very specific unique content xyz123', session)
       )
 
-      const results = await peer.conclusions.query(
-        'specific unique xyz123',
-        10,
-        0.5 // Strict distance threshold
-      )
+      const results = await peer.conclusions.query('specific unique xyz123', {
+        topK: 10,
+        distance: 0.5, // Strict distance threshold
+      })
 
       expect(Array.isArray(results)).toBe(true)
     })
@@ -327,7 +326,7 @@ describe('Conclusions', () => {
 
       for (const key of ['observer', 'observed', 'observer_id', 'observed_id']) {
         await expect(
-          peer.conclusions.query('q', 10, undefined, { [key]: 'someone-else' })
+          peer.conclusions.query('q', { filters: { [key]: 'someone-else' } })
         ).rejects.toThrow(/managed by this conclusions view/)
       }
     })
@@ -338,7 +337,7 @@ describe('Conclusions', () => {
       // Should not throw the reserved-key guard; session_id is a normal filter
       // for query. The call may return no matches, which is fine.
       await expect(
-        peer.conclusions.query('q', 10, undefined, { session_id: 'sess' })
+        peer.conclusions.query('q', { filters: { session_id: 'sess' } })
       ).resolves.toBeDefined()
     })
 
