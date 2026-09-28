@@ -156,6 +156,7 @@ HOW TO WRITE ONE:
 - Name the topic inside the conclusion ("For the upstream gap jobs, ...", "The user's home network ...").
   - Why: a conclusion is found by its topic.
 - State one fact per conclusion.
+- Keep a conclusion under 30 words; a second fact is a second conclusion.
 - Make it self-contained: understandable months later without the conversation.
 - Use plain wording: no hedging, no inflation, no coined label; "the user prefers X" never becomes a philosophy.
 - Use absolute dates for time-bound facts ("June 26, 2025", never "yesterday").
@@ -174,6 +175,10 @@ NEVER EXTRACT:
 - Text copied from tool output or a report.
   - Extract the finding, not the transcript.
 - Guesses: anything that needs "likely" or "probably"; invented specifics, entities or affiliations.
+- How a job, tool, script or system behaved in one run: a defect, a false finding, what a run produced.
+  - Extract only the ruling the user gave about it.
+- When to apply a skill, job or procedure; the skill owns its trigger.
+  - Extract that it exists and what it does.
 - Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle or party, current location, trip-only decisions.
   - This holds after the trip ends: durable travel history belongs to the authoritative trip project.
   - This exclusion is specific to travel trips and never covers a software, home or other non-travel outcome.

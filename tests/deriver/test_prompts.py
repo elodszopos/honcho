@@ -146,6 +146,10 @@ def test_never_extract_names_secrets_transient_state_and_volatile_values() -> No
     assert "Values that change often" in prompt
     assert "The stable name, path or job that holds them may be a pointer." in prompt
     assert "The act of asking, acknowledging or recording" in prompt
+    assert "How a job, tool, script or system behaved in one run" in prompt
+    assert "Extract only the ruling the user gave about it." in prompt
+    assert "When to apply a skill, job or procedure; the skill owns its trigger." in prompt
+    assert "Keep a conclusion under 30 words; a second fact is a second conclusion." in prompt
     assert "OWNER GATE" not in prompt
     assert "ZERO extractions" not in prompt
 

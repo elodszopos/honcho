@@ -53,6 +53,7 @@ PROFILES_SAMPLE_RATE = 0.1
 # LLM settings
 [llm]
 DEFAULT_MAX_TOKENS = 2500
+SEND_OUTPUT_CAP = true  # false: no cap on the wire (Codex-backed routes reject one); the last user message ends with "Try not to go beyond N characters" and the cap stays an answer budget
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 

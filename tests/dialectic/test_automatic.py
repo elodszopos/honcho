@@ -306,7 +306,7 @@ class TestAutomaticAgent:
 
         system = agent.messages[0]["content"]
         assert "no tools are available" in system
-        assert "under 450 characters" in system
+        assert "Try not to go beyond 450 characters" in system
         assert "single word NONE" in system
         assert "## TOOLS" not in system
 

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel
 
-from src.config import ModelConfig
+from src.config import ModelConfig, settings
 from src.exceptions import ValidationException
 from src.llm.caching import PromptCachePolicy
 from src.llm.request_builder import execute_completion
@@ -10,6 +10,41 @@ from tests.llm.conftest import FakeBackend
 
 class SampleResponse(BaseModel):
     answer: str
+
+
+async def test_last_user_message_ends_with_the_character_limit_when_no_cap_is_sent(
+    fake_backend: FakeBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings.LLM, "SEND_OUTPUT_CAP", False)
+    config = ModelConfig(model="gpt-4.1", transport="openai")
+    messages = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi"},
+        {"role": "user", "content": "Again"},
+    ]
+
+    await execute_completion(fake_backend, config, messages=messages, max_tokens=100)
+
+    sent = fake_backend.calls[0]["messages"]
+    assert sent[:3] == messages[:3]
+    assert sent[3] == {
+        "role": "user",
+        "content": "Again\n\nTry not to go beyond 400 characters.",
+    }
+    assert messages[3]["content"] == "Again"
+
+
+async def test_messages_are_untouched_when_the_cap_goes_on_the_wire(
+    fake_backend: FakeBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings.LLM, "SEND_OUTPUT_CAP", True)
+    config = ModelConfig(model="gpt-4.1", transport="openai")
+    messages = [{"role": "user", "content": "Hello"}]
+
+    await execute_completion(fake_backend, config, messages=messages, max_tokens=100)
+
+    assert fake_backend.calls[0]["messages"] == [{"role": "user", "content": "Hello"}]
 
 
 async def test_gemini_explicit_budget_passes_tokens_through_without_adjustment(

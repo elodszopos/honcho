@@ -11,6 +11,7 @@ import pytest
 from openai import BadRequestError
 from pydantic import BaseModel
 
+from src.config import settings
 from src.exceptions import ValidationException
 from src.llm.backends.openai import (
     OpenAIBackend,
@@ -69,7 +70,10 @@ def _structured_create_return(content: str, parsed: Any = None) -> SimpleNamespa
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_uses_gpt5_params_and_extracts_reasoning() -> None:
+async def test_openai_backend_uses_gpt5_params_and_extracts_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings.LLM, "SEND_OUTPUT_CAP", True)
     client = Mock()
     client.chat.completions.create = AsyncMock(
         return_value=SimpleNamespace(
@@ -125,9 +129,10 @@ async def test_openai_backend_uses_gpt5_params_and_extracts_reasoning() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models() -> (
-    None
-):
+async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings.LLM, "SEND_OUTPUT_CAP", True)
     client = Mock()
     client.chat.completions.create = AsyncMock(
         return_value=SimpleNamespace(
@@ -167,9 +172,45 @@ async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_does_not_treat_proxy_models_with_gpt5_substring_as_gpt5() -> (
-    None
-):
+async def test_openai_backend_sends_no_output_cap_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings.LLM, "SEND_OUTPUT_CAP", False)
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="Hello", tool_calls=[], reasoning_details=[]
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10, completion_tokens=5, prompt_tokens_details=None
+            ),
+        )
+    )
+    backend = OpenAIBackend(client)
+
+    for model in ("gpt-4.1", "gpt-5"):
+        await backend.complete(
+            model=model,
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+        )
+        await_args = client.chat.completions.create.await_args
+        if await_args is None:
+            raise AssertionError("Expected OpenAI create call")
+        call = await_args.kwargs
+        assert "max_tokens" not in call
+        assert "max_completion_tokens" not in call
+
+
+async def test_openai_backend_does_not_treat_proxy_models_with_gpt5_substring_as_gpt5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Regression: proxy/deployment names containing 'gpt-5' must use `max_tokens`.
 
     Flexible OpenAI-compatible configuration means operators commonly route through
@@ -177,6 +218,7 @@ async def test_openai_backend_does_not_treat_proxy_models_with_gpt5_substring_as
     `my-gpt-5-proxy`. A naive substring check would incorrectly send
     `max_completion_tokens` (a GPT-5-only parameter) to those endpoints.
     """
+    monkeypatch.setattr(settings.LLM, "SEND_OUTPUT_CAP", True)
     client = Mock()
     client.chat.completions.create = AsyncMock(
         return_value=SimpleNamespace(

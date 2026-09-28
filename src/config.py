@@ -791,6 +791,8 @@ class LLMSettings(HonchoSettings):
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
+    # Off keeps the cap as an answer budget only; the request carries no output cap.
+    SEND_OUTPUT_CAP: bool = True
 
     # Maximum characters for tool output to prevent token explosion.
     # Set to 10,000 chars (~2,500 tokens at 4 chars/token) to stay well under

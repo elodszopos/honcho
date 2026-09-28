@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from src.config import ModelConfig, PromptCachePolicy, coerce_provider_timeout
+from src.config import ModelConfig, PromptCachePolicy, coerce_provider_timeout, settings
 from src.exceptions import ValidationException
 
 from .backend import (
@@ -143,6 +143,29 @@ def _normalize_extra_params(extra_params: dict[str, Any]) -> dict[str, Any]:
     return _strip_none_params(result, ("timeout",))
 
 
+_CHARS_PER_TOKEN = 4
+
+
+def _with_output_nudge(
+    messages: list[dict[str, Any]], max_tokens: int
+) -> list[dict[str, Any]]:
+    """The last user message ends with a soft character limit when no cap goes on the wire."""
+    if settings.LLM.SEND_OUTPUT_CAP:
+        return messages
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            nudged = {
+                **message,
+                "content": (
+                    f"{message['content']}\n\n"
+                    f"Try not to go beyond {max_tokens * _CHARS_PER_TOKEN} characters."
+                ),
+            }
+            return [*messages[:index], nudged, *messages[index + 1 :]]
+    return messages
+
+
 async def execute_completion(
     backend: ProviderBackend,
     config: ModelConfig,
@@ -171,7 +194,7 @@ async def execute_completion(
     try:
         return await backend.complete(
             model=config.model,
-            messages=messages,
+            messages=_with_output_nudge(messages, effective_max_tokens),
             max_tokens=effective_max_tokens,
             temperature=config.temperature,
             stop=stop if stop is not None else config.stop_sequences,
@@ -215,7 +238,7 @@ async def execute_stream(
 
     return backend.stream(
         model=config.model,
-        messages=messages,
+        messages=_with_output_nudge(messages, effective_max_tokens),
         max_tokens=effective_max_tokens,
         temperature=config.temperature,
         stop=stop if stop is not None else config.stop_sequences,

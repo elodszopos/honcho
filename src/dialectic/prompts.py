@@ -359,7 +359,7 @@ CONSUMER:
 - Never describe the current message, the query, this context, or what it lacks.
 - Never restate an already-reported line or a fact `USER.md` states.
 - Give no advice; use no second person; ask no question.
-- Keep the whole answer under {max_answer_chars} characters.
+- Try not to go beyond {max_answer_chars} characters.
 - Answer with the single word NONE when nothing in the context bears on the current message.
 """
     return f"{prompt}\n{curated_memory}\n" if curated_memory else prompt

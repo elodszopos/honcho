@@ -9,6 +9,7 @@ from typing import Any, cast
 from openai import BadRequestError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
+from src.config import settings
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.request_builder import (
@@ -355,10 +356,11 @@ class OpenAIBackend:
         }
 
         if _uses_max_completion_tokens(model):
-            params["max_completion_tokens"] = max_tokens
+            if settings.LLM.SEND_OUTPUT_CAP:
+                params["max_completion_tokens"] = max_tokens
             if extra_params and extra_params.get("verbosity"):
                 params["verbosity"] = extra_params["verbosity"]
-        else:
+        elif settings.LLM.SEND_OUTPUT_CAP:
             params["max_tokens"] = max_tokens
 
         if temperature is not None:
