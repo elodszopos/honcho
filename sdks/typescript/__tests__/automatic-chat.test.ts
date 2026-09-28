@@ -89,7 +89,7 @@ describe('Peer chat automatic option', () => {
     { searchText: '' },
     { searchText: 'reminder job', excerptLimit: 21 },
     { searchText: 'reminder job', maxAnswerChars: 99 },
-    { searchText: 'reminder job', excludeConclusionIds: Array(201).fill('c') },
+    { searchText: 'reminder job', excludeConclusionIds: Array(1001).fill('c') },
   ])('refuses %p before any request', async (automatic) => {
     const peer = await client.peer('automatic-chat-invalid-peer')
 

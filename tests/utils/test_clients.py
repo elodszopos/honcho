@@ -310,7 +310,10 @@ class TestOpenAIClient:
         )
         mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
-        with patch.dict(CLIENTS, {"openai": mock_client}):
+        with (
+            patch.dict(CLIENTS, {"openai": mock_client}),
+            patch.object(settings.LLM, "SEND_OUTPUT_CAP", True),
+        ):
             _response = await honcho_llm_call_inner(
                 provider="openai",
                 model="gpt-5-turbo",

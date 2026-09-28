@@ -23,11 +23,11 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `0ba0db57` — upstream's tip; the backlog is closed |
-| Last upstream merge | `0ba0db57`, 2026-09-25 |
-| Carried surface | 77 files, +5,134 / -1,994 against `0ba0db57`, measured after the commit that records it; 23 further files are fork-only additions |
+| Fork point | `7d7db70a` — upstream's tip; the backlog is closed |
+| Last upstream merge | `7d7db70a`, 2026-09-28 |
+| Carried surface | 98 files, +6,601 / -2,125 against `7d7db70a`, measured after the commit that records it; 42 further files are fork-only additions |
 | Collides with upstream | the next pull's manifest comes from the gap report; nothing is outstanding |
-| Schema | unchanged; `migrations/` is byte-identical to `0ba0db57`, and `a7c3e9f1b2d4_add_document_sources_table.py` is upstream's, taken as-is |
+| Schema | unchanged by the fork; `migrations/` is byte-identical to `7d7db70a`, and `b8d2f4a6c9e1_index_session_peers_by_peer.py` is upstream's, taken as-is |
 
 ## Deliberately not carried
 
