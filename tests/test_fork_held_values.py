@@ -21,7 +21,7 @@ from src.deriver.prompts import minimal_deriver_prompt
 from src.dreamer import dream_scheduler, surprisal
 from src.llm import api as llm_api
 from src.llm import registry as llm_registry
-from src.llm.api import is_transient_llm_error
+from src.llm.errors import is_transient_llm_error
 from src.reconciler import sync_vectors
 from src.utils import agent_tools
 from src.utils import representation as representation_module
@@ -120,24 +120,25 @@ def test_quota_rejection_is_never_retried():
 
 
 def test_every_llm_retry_site_screens_quota_rejections():
-    """The predicate only holds the line at sites that are told to consult it."""
-    tree = ast.parse(Path(llm_api.__file__).read_text())
+    """The predicate only holds the line at sites that are told to consult it: the plain call,
+    the tool loop's iterations, its final synthesis and its streamed setup."""
     sites = [
-        node
-        for node in ast.walk(tree)
+        (path, node)
+        for path in sorted(Path(llm_api.__file__).parent.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text()))
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "retry"
     ]
-    assert sites
+    assert {path.name for path, _ in sites} >= {"api.py", "tool_loop.py"}
 
-    for site in sites:
+    for path, site in sites:
         assert any(
             keyword.arg == "retry"
             and "is_transient_llm_error" in ast.unparse(keyword.value)
             for keyword in site.keywords
         ), (
-            f"retry() at {Path(llm_api.__file__).name}:{site.lineno} retries every "
+            f"retry() at {path.name}:{site.lineno} retries every "
             "exception, so a quota 429 is re-spent instead of surfacing"
         )
 

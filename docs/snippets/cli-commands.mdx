@@ -13,10 +13,12 @@ List, search, create, and delete peer conclusions (Honcho's memory atoms).
 Create a conclusion.
 
 ```bash
-honcho conclusion create <content>
+honcho conclusion create <payload>
 ```
 
-<ParamField path="content" type="string" required />
+<ParamField path="payload" type="string" required>
+  JSON admission payload: `content`, `action`, `reason_for_entry`, `search_query`, `searched_conclusion_ids`, `entry_origin`, `agent_trace_id`, `agent_model`. Plain text is refused.
+</ParamField>
 <ParamField path="--observer" type="string">
   Observer peer ID.
 </ParamField>

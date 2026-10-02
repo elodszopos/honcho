@@ -164,9 +164,12 @@ overrides say nothing about what a merge would revert. The assertion lives in
 - `GET /conclusions/{id}` and `GET /conclusions/{id}/lineage` are both live: upstream's reads
   the live pool and 404s on a retired row, the fork's returns the retired row with its ledger.
   Upstream's own soft-delete route test asserts the 404, so it also pins that split.
-- A 429 whose body says `usage_limit_reached` is never retried (`is_transient_llm_error`),
+- A 429 whose body says `usage_limit_reached` is never retried: `is_transient_llm_error` in
+  `src/llm/errors.py` screens every `retry()` site under `src/llm`, the tool loop's included,
   and the OpenAI clients are built with `max_retries=0` so the tenacity wrapper is the only
   retry policy.
+- `honcho conclusion create` takes the JSON admission payload whole and refuses plain text;
+  upstream's content-only create cannot pass the admission contract.
 - `ExtractedRepresentation` and `AdmissionRepresentation` are the two response models; the
   structured-output repair path treats both as representation models.
 - Every batch message reaches the deriver inside upstream's `<message>` tag carrying one extra
@@ -214,7 +217,8 @@ overrides say nothing about what a merge would revert. The assertion lives in
   the live tests also take. An upstream edit to that fixture's body — session lifecycle, a new
   `tracked_db` import site — is ported into `_tracked_db` and `TRACKED_DB_TARGETS`, never
   resolved away with the conflict: an unpatched import site writes to whatever database
-  settings resolve to.
+  settings resolve to. `tests/test_tracked_db_targets.py` fails on a module-level import site
+  missing from the list.
 - `src/routers/messages.py` widens upstream's enqueue payload with the message metadata, which
   is how `is_seeded_memory_message` sees a local-memory seed block.
 - Upstream tests that create a conclusion arrive without the admission envelope, because

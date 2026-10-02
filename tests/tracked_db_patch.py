@@ -42,6 +42,11 @@ TRACKED_DB_TARGETS: tuple[str, ...] = (
     "src.dreamer.specialists.tracked_db",
     "src.dreamer.surprisal.tracked_db",
     "src.deriver.scope_backfill.tracked_db",
+    "src.backlog.tracked_db",
+    "src.dialectic.workspace.tracked_db",
+    "src.reconciler.backfill_document_sources.tracked_db",
+    "src.reconciler.queue_cleanup.tracked_db",
+    "src.reconciler.scheduler.tracked_db",
 )
 
 

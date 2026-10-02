@@ -24,7 +24,7 @@ from collections.abc import (
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from src.config import ModelTransport
 from src.exceptions import ValidationException
@@ -38,6 +38,7 @@ from src.utils.types import (
     set_last_tool_metadata,
 )
 
+from .errors import is_transient_llm_error
 from .executor import honcho_llm_call_inner
 from .registry import history_adapter_for_provider
 from .runtime import (
@@ -269,6 +270,7 @@ async def stream_final_response(
 
     if enable_retry:
         wrapped = retry(
+            retry=retry_if_exception(is_transient_llm_error),
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,
@@ -425,6 +427,7 @@ async def execute_tool_loop(
             call_func: Callable[[], Awaitable[HonchoLLMCallResponse[Any]]]
             if enable_retry:
                 call_func = retry(
+                    retry=retry_if_exception(is_transient_llm_error),
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
                     before_sleep=before_retry_callback,
@@ -737,6 +740,7 @@ async def execute_tool_loop(
 
     if enable_retry:
         final_call_func = retry(
+            retry=retry_if_exception(is_transient_llm_error),
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
             before_sleep=before_retry_callback,

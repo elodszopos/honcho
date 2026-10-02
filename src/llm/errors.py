@@ -76,4 +76,12 @@ def raise_upstream_error(exc: BaseException) -> None:
         raise upstream from exc
 
 
-__all__ = ["as_upstream_error", "raise_upstream_error"]
+def is_transient_llm_error(exc: BaseException) -> bool:
+    """A quota rejection stays rejected until its reset; only other failures earn a retry."""
+    quota_rejection = getattr(exc, "status_code", None) == 429 and (
+        "usage_limit_reached" in str(exc)
+    )
+    return not quota_rejection
+
+
+__all__ = ["as_upstream_error", "is_transient_llm_error", "raise_upstream_error"]

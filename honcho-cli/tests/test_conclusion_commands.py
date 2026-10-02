@@ -85,3 +85,56 @@ def test_conclusion_rows_carry_attribution(cfg, runner, argv: list[str], label: 
     assert [row["id"] for row in rows] == ["c0", "c1"]
     assert [row["times_derived"] for row in rows] == [1, 2]
     assert [row["source_ids"] for row in rows] == [["p0"], ["p1"]]
+
+
+def _patched_create_client(scope: MagicMock):
+    peer = MagicMock()
+    peer.conclusions_of.return_value = scope
+    peer.conclusions = scope
+    client = MagicMock()
+    client.peer.return_value = peer
+    config = MagicMock(workspace_id="ws1", session_id="s1")
+    return patch(
+        "honcho_cli.commands.conclusion.get_client", return_value=(client, config)
+    )
+
+
+_ADMISSION = {
+    "content": "The user prefers metric units.",
+    "action": "create",
+    "reason_for_entry": "unit preference for answers",
+    "search_query": "metric units",
+    "searched_conclusion_ids": [],
+    "entry_origin": "operator_cli",
+    "agent_trace_id": "trace-1",
+    "agent_model": "operator",
+}
+
+
+def test_conclusion_create_sends_the_whole_admission_payload(cfg, runner):
+    scope = MagicMock()
+    scope.create.return_value = [_conclusion(0)]
+
+    with _patched_create_client(scope):
+        result = runner.invoke(
+            app,
+            ["conclusion", "create", json.dumps(_ADMISSION), "--observer", "alice", "--observed", "bob"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert scope.create.call_args.args[0] == [{**_ADMISSION, "session_id": "s1"}]
+
+
+def test_conclusion_create_refuses_plain_text_and_names_the_admission_fields(cfg, runner):
+    scope = MagicMock()
+
+    with _patched_create_client(scope):
+        result = runner.invoke(
+            app,
+            ["conclusion", "create", "The user prefers metric units.", "--observer", "alice"],
+        )
+
+    assert result.exit_code == 1
+    assert "reason_for_entry" in result.output
+    assert "searched_conclusion_ids" in result.output
+    scope.create.assert_not_called()

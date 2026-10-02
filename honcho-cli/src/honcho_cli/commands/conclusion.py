@@ -7,6 +7,7 @@ from typing import Optional
 from uuid import uuid4
 
 import typer
+from honcho.conclusions import ConclusionCreateParams
 
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.output import print_error, print_result, status, use_json
@@ -236,7 +237,9 @@ def derived(
 
 @app.command()
 def create(
-    content: str = typer.Argument(help="Conclusion content or JSON payload"),
+    payload: str = typer.Argument(
+        help="JSON admission payload: content plus the agent decision and its search evidence"
+    ),
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
     session_id: Optional[str] = typer.Option(
@@ -256,13 +259,21 @@ def create(
     observer = _require_observer(observer)
     client, config = get_client()
 
-    # If content looks like JSON, try to parse it
     try:
-        payload = json.loads(content)
-        if isinstance(payload, dict):
-            content = payload.get("content", content)
+        admission = json.loads(payload)
     except json.JSONDecodeError:
-        pass
+        admission = None
+    if not isinstance(admission, dict):
+        required = ", ".join(
+            name
+            for name, field in ConclusionCreateParams.model_fields.items()
+            if field.is_required()
+        )
+        print_error(
+            "ADMISSION_REQUIRED",
+            f"Conclusion create takes a JSON admission payload with: {required}",
+        )
+        raise typer.Exit(1)
 
     p = client.peer(observer)
 
@@ -272,8 +283,8 @@ def create(
         else:
             scope = p.conclusions
 
-        params: dict[str, object] = {"content": content}
-        if config.session_id:
+        params: dict[str, object] = dict(admission)
+        if config.session_id and "session_id" not in params:
             params["session_id"] = config.session_id
         results = scope.create([params])
         result = results[0] if results else None

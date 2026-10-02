@@ -24,6 +24,7 @@ from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import ValidationException
 from src.telemetry.reasoning_traces import log_reasoning_trace
 
+from .errors import is_transient_llm_error
 from .executor import honcho_llm_call_inner
 from .runtime import (
     AttemptPlan,
@@ -47,14 +48,6 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 M = TypeVar("M", bound=BaseModel)
-
-
-def is_transient_llm_error(exc: BaseException) -> bool:
-    """A quota rejection stays rejected until its reset; only other failures earn a retry."""
-    quota_rejection = getattr(exc, "status_code", None) == 429 and (
-        "usage_limit_reached" in str(exc)
-    )
-    return not quota_rejection
 
 
 def _message_chars(messages: list[dict[str, Any]] | None) -> int:
