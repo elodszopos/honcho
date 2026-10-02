@@ -159,7 +159,7 @@ HOW TO WRITE ONE:
 - Keep a conclusion under 30 words; a second fact is a second conclusion.
 - Make it self-contained: understandable months later without the conversation.
 - Use plain wording: no hedging, no inflation, no coined label; "the user prefers X" never becomes a philosophy.
-- Use absolute dates for time-bound facts ("June 26, 2025", never "yesterday").
+- Use absolute dates for time-bound facts, resolving relative references against the message `time` attribute ("June 26, 2025", never "yesterday").
 - Put no date on a standing preference or rule.
 - Keep the behavioral hook when there is one: when, do, avoid.
 

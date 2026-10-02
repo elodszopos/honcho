@@ -14,6 +14,7 @@ from src.crud.message import search_message_snippets
 from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.dialectic.core import DialecticAgent
+from src.llm.types import LLMTelemetryContext
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils import summarizer
 from src.utils.curated_memory import curated_memory_block
@@ -193,9 +194,12 @@ class AutomaticDialecticAgent(DialecticAgent):
             )
         return {name: summary["content"] for name, summary in found.items()}
 
-    async def _prepare_query(self, query: str) -> Any:
-        prepared = await super()._prepare_query(query)
+    async def _prepare_query(self, query: str, telemetry: LLMTelemetryContext) -> Any:
+        prepared = await super()._prepare_query(query, telemetry)
         if getattr(self, "_context_empty", False):
+            run = prepared[-1]
+            if run is not None:
+                run.end()
             raise _NoContext
         return prepared
 

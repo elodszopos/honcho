@@ -1,7 +1,9 @@
+import json
 from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel
 
 from src.deriver.prompts import (
     _estimate_scaffold_tokens,  # pyright: ignore[reportPrivateUsage]
@@ -11,6 +13,12 @@ from src.deriver.prompts import (
     format_deriver_message,
     minimal_deriver_prompt,
 )
+from src.utils.representation import AdmissionRepresentation, ExtractedRepresentation
+
+
+@pytest.fixture(autouse=True)
+def clean_queue_tables() -> None:
+    """Override the package-level DB fixture: these tests only render strings."""
 
 
 def test_format_deriver_message_marks_target_peer() -> None:
@@ -226,3 +234,37 @@ def test_estimate_deriver_prompt_tokens_propagates_token_estimation_errors() -> 
 
         with pytest.raises(RuntimeError, match="tokenizer unavailable"):
             estimate_deriver_prompt_tokens("Prefer concrete facts.")
+
+
+@pytest.mark.parametrize(
+    "response_model", [ExtractedRepresentation, AdmissionRepresentation]
+)
+def test_model_visible_scaffold_carries_no_upstream_example_facts(
+    response_model: type[BaseModel],
+) -> None:
+    """The fork keeps its own fabricated examples in the prompt; the structured-output
+    schemas carry no example lists, and neither surface carries the facts upstream's
+    earlier scaffold leaked."""
+    prompt = minimal_deriver_prompt(peer_id="", messages="", custom_instructions=None)
+    schema = json.dumps(response_model.model_json_schema())
+
+    assert "example" not in schema.lower()
+
+    for legacy in ("dog", "NYC", "25 years", "six years", "alice", "Rover", "Ann "):
+        assert legacy not in prompt
+        assert legacy not in schema
+
+
+def test_minimal_deriver_prompt_calls_the_target_peer_the_user() -> None:
+    prompt = minimal_deriver_prompt(peer_id="x7", messages="", custom_instructions=None)
+
+    assert 'Call the target peer "the user" in every conclusion' in prompt
+    assert "Write `x7` as the subject" not in prompt
+
+
+def test_minimal_deriver_prompt_resolves_relative_dates_against_message_time() -> None:
+    prompt = minimal_deriver_prompt(peer_id="x7", messages="", custom_instructions=None)
+
+    assert (
+        "resolving relative references against the message `time` attribute" in prompt
+    )

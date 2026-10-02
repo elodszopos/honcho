@@ -23,11 +23,11 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `7d7db70a` — upstream's tip; the backlog is closed |
-| Last upstream merge | `7d7db70a`, 2026-09-28 |
-| Carried surface | 98 files, +6,601 / -2,125 against `7d7db70a`, measured after the commit that records it; 42 further files are fork-only additions |
+| Fork point | `0936ee2e` — upstream's tip; the backlog is closed |
+| Last upstream merge | `0936ee2e`, 2026-10-02 |
+| Carried surface | 99 files, +6,625 / -2,133 against `0936ee2e`, measured on the merge tree; 42 further files are fork-only additions |
 | Collides with upstream | the next pull's manifest comes from the gap report; nothing is outstanding |
-| Schema | unchanged by the fork; `migrations/` is byte-identical to `7d7db70a`, and `b8d2f4a6c9e1_index_session_peers_by_peer.py` is upstream's, taken as-is |
+| Schema | unchanged by the fork; `migrations/` is byte-identical to `0936ee2e` |
 
 ## Deliberately not carried
 
@@ -60,6 +60,15 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 - Per-observation embedding inside `agent_tools.create_observations`. The admission path lets
   `crud.create_observations` embed, so upstream's batch-with-single-item-fallback belongs to
   the write path this fork does not use.
+- Upstream's deriver instruction to write the peer id as the subject, and its test. The fork's
+  deriver writes "the user"; see the adaptation below.
+- Upstream's example-free deriver scaffold. The fork's selective-extraction rules keep their
+  fabricated EXTRACT and NOTHING examples; when this was decided the live pool held no conclusion
+  copied from one. Upstream's scaffold test is kept for the structured-output schemas and its
+  legacy leaked facts only.
+- Upstream's deriver rules for accepted proposals, atomic facts and reworded duplicates. The fork's
+  acceptance rule, one-fact rule and writing contract already cover them, the acceptance rule more
+  broadly.
 
 ## Values set against upstream's
 
@@ -228,6 +237,10 @@ overrides say nothing about what a merge would revert. The assertion lives in
   declaration and not behaviour. `DERIVER.DEDUPLICATE` reaches neither; restoring either
   forwarding call re-enables threshold dedup on a live write path, which is why a test asserts
   the forwarding stays absent.
+- `AutomaticDialecticAgent._prepare_query` overrides `DialecticAgent._prepare_query` and ends the
+  run span the base opened before refusing an empty context. An upstream change to that signature
+  or its returned tuple merges clean and fails only when an automatic chat runs;
+  `tests/dialectic/test_automatic.py` is the tripwire.
 - Prompt and instruction text is behavioural and security surface. An upstream edit to any
   prompt this fork rewrote gets read and given a verdict, never merged on the diff alone.
 
