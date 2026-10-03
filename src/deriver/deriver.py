@@ -304,6 +304,19 @@ async def process_representation_tasks_batch(
         response.hit_input_token_cap,
         type(response.content).__name__,
     )
+    if response.content.skipped:
+        logger.info(
+            "deriver.batch left_out: trace_id=%s workspace=%s session=%s observed=%s count=%d items=%s",
+            trace_id,
+            latest_message.workspace_name,
+            latest_message.session_name,
+            observed,
+            len(response.content.skipped),
+            json.dumps(
+                [item.model_dump() for item in response.content.skipped],
+                ensure_ascii=False,
+            ),
+        )
 
     message_ids = [m.id for m in messages if m.peer_name == observed]
     target_message_ids = set(message_ids)
@@ -447,6 +460,27 @@ async def process_representation_tasks_batch(
             )
             raise
         admission_llm_duration = (time.perf_counter() - admission_llm_start) * 1000
+        if admission_response.content.rejected:
+            logger.info(
+                "deriver.batch rejected: trace_id=%s workspace=%s session=%s observed=%s count=%d items=%s",
+                admission_trace_id,
+                latest_message.workspace_name,
+                latest_message.session_name,
+                observed,
+                len(admission_response.content.rejected),
+                json.dumps(
+                    [
+                        {
+                            "candidate": case_context[item.admission_case_id][1].content
+                            if item.admission_case_id in case_context
+                            else None,
+                            "reason": item.reason,
+                        }
+                        for item in admission_response.content.rejected
+                    ],
+                    ensure_ascii=False,
+                ),
+            )
 
         admitted_by_observer: dict[str, Representation] = {}
         decided_case_ids: set[int] = set()

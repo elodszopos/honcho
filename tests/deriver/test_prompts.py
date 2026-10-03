@@ -123,6 +123,8 @@ def test_conclusions_cover_the_user_their_standing_rules_and_their_topics() -> N
     assert "Name the topic inside the conclusion" in prompt
     assert "still true and useful a month from now, beyond the task at hand" in prompt
     assert "Merge two candidates that say the same thing into one." in prompt
+    assert "A one-time detail can show a lasting fact about the user" in prompt
+    assert "The user's children attend swimming practice." in prompt
     assert "A pointer to where something lives" not in prompt
     assert "how something works" not in prompt
 
@@ -161,6 +163,11 @@ def test_never_extract_sends_occasions_and_owned_facts_elsewhere() -> None:
     assert "USER.md" not in prompt
     assert "What is true only for now or for one occasion" in prompt
     assert "How the user wants every such occasion handled can qualify." in prompt
+    assert (
+        "A state that holds until something changes is a conclusion; a status is what"
+        in prompt
+    )
+    assert "Asking for something once says nothing lasting" in prompt
     assert "What another owner already holds by nature:" in prompt
     assert "belong to the skill or job that does it" in prompt
     assert (
@@ -172,6 +179,7 @@ def test_never_extract_sends_occasions_and_owned_facts_elsewhere() -> None:
     assert "that belongs to the system's backlog, not to memory." in prompt
     assert "Rules about what memory holds belong to the memory doctrine." in prompt
     assert "The act of asking, acknowledging or recording" in prompt
+    assert "that you weighed and did not extract in `skipped`" in prompt
     assert (
         "Keep a conclusion under 30 words; a second fact is a second conclusion."
         in prompt
@@ -216,6 +224,7 @@ def test_rules_go_to_the_system_turn_and_the_batch_to_the_user_turn() -> None:
         in system["content"]
     )
     assert "Extract nothing from them" in system["content"]
+    assert "Put every case you do not admit in `rejected`" in system["content"]
     assert 'message_id="7"' in user["content"]
     assert "Alice prefers unsweetened tea." in user["content"]
     assert "candidate-1: Alice likes tea." in user["content"]

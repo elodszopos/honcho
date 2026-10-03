@@ -106,10 +106,12 @@ class JudgeBatch(BaseModel):
 
 class Usage:
     def __init__(self) -> None:
-        self.calls: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        self.calls: dict[str, list[tuple[int, int, int]]] = defaultdict(list)
 
-    def add(self, pass_name: str, input_tokens: int, cached_tokens: int) -> None:
-        self.calls[pass_name].append((input_tokens, cached_tokens))
+    def add(
+        self, pass_name: str, input_tokens: int, cached_tokens: int, output_tokens: int
+    ) -> None:
+        self.calls[pass_name].append((input_tokens, cached_tokens, output_tokens))
 
     def summary(self) -> dict[str, dict[str, Any]]:
         out = {}
@@ -119,6 +121,7 @@ class Usage:
             out[pass_name] = {
                 "calls": len(rows),
                 "input_tokens": total,
+                "output_tokens": sum(r[2] for r in rows),
                 "cached_tokens": cached,
                 "cached_share": round(cached / total, 3) if total else 0.0,
                 "cold_calls": sum(1 for r in rows if r[1] == 0),
@@ -185,7 +188,12 @@ async def llm(
         if not is_transient_llm_error(exc):
             QUOTA_REACHED.set()
         raise
-    usage.add(pass_name, response.input_tokens, response.cache_read_input_tokens)
+    usage.add(
+        pass_name,
+        response.input_tokens,
+        response.cache_read_input_tokens,
+        response.output_tokens,
+    )
     return response.content
 
 
@@ -224,7 +232,10 @@ async def replay_case(
     record: dict[str, Any] = {
         "case_id": case["case_id"],
         "candidates": [],
+        "skipped": [],
         "stored": [],
+        "stored_detail": [],
+        "rejected": [],
     }
     try:
         messages = formatted_batch(case)
@@ -236,6 +247,7 @@ async def replay_case(
             ExtractedRepresentation,
         )
         record["candidates"] = [item.content for item in extracted.explicit]
+        record["skipped"] = [item.model_dump() for item in extracted.skipped]
         if not record["candidates"]:
             return record
         empty = Representation().format_as_markdown(include_ids=True)
@@ -268,6 +280,23 @@ async def replay_case(
             AdmissionRepresentation,
         )
         record["stored"] = [decision.content for decision in admitted.explicit]
+        record["stored_detail"] = [
+            {
+                "content": decision.content,
+                "reason": decision.reason_for_entry,
+                "source_message_ids": decision.source_message_ids,
+            }
+            for decision in admitted.explicit
+        ]
+        record["rejected"] = [
+            {
+                "candidate": record["candidates"][item.admission_case_id]
+                if item.admission_case_id < len(record["candidates"])
+                else None,
+                "reason": item.reason,
+            }
+            for item in admitted.rejected
+        ]
     except Exception as exc:  # one failing case is recorded, never fatal to the run
         record["error"] = f"{type(exc).__name__}: {exc}"[:500]
     return record
@@ -490,12 +519,12 @@ def write_report(
     lines += [
         "## Cache",
         "",
-        "| pass | calls | input tokens | cached share | cold calls |",
-        "|---|---|---|---|---|",
+        "| pass | calls | input tokens | output tokens | cached share | cold calls |",
+        "|---|---|---|---|---|---|",
     ]
     for pass_name, u in usage.items():
         lines.append(
-            f"| {pass_name} | {u['calls']} | {u['input_tokens']} | {u['cached_share']:.1%} | {u['cold_calls']} |"
+            f"| {pass_name} | {u['calls']} | {u['input_tokens']} | {u.get('output_tokens', '-')} | {u['cached_share']:.1%} | {u['cold_calls']} |"
         )
     lines += ["", "## Wrong items (last run per split)", ""]
     for split, k, records, verdicts, _ in all_verdicts:
@@ -505,6 +534,11 @@ def write_report(
         for record in records:
             v = by_id.get(record["case_id"], {})
             label = labels.get(record["case_id"], {"must": []})
+            said = {
+                m["id"]: m["content"]
+                for m in cases.get(record["case_id"], {}).get("messages", [])
+            }
+            details = record.get("stored_detail", [])
             for item in v.get("items", []):
                 if item["verdict"] == "garbage" and item["index"] < len(
                     record["stored"]
@@ -512,11 +546,32 @@ def write_report(
                     lines.append(
                         f"- {split} {record['case_id']} garbage/{item.get('category')}: {record['stored'][item['index']]}"
                     )
-            for i in v.get("missed_must", []):
-                if i < len(label.get("must", [])):
+                    if item["index"] < len(details):
+                        detail = details[item["index"]]
+                        cited = " | ".join(
+                            said.get(mid, "?")[:160].replace("\n", " ")
+                            for mid in detail["source_message_ids"]
+                        )
+                        lines.append(f"  - stored because: {detail['reason']}")
+                        lines.append(f"  - cites: {cited}")
+            missed = [
+                label["must"][i]
+                for i in v.get("missed_must", [])
+                if i < len(label.get("must", []))
+            ]
+            for fact in missed:
+                lines.append(f"- {split} {record['case_id']} missed: {fact}")
+            if missed:
+                for left in record.get("skipped", []):
                     lines.append(
-                        f"- {split} {record['case_id']} missed: {label['must'][i]}"
+                        f"  - skipped: {left['statement']} (because: {left['reason']})"
                     )
+                for left in record.get("rejected", []):
+                    lines.append(
+                        f"  - rejected: {left['candidate']} (because: {left['reason']})"
+                    )
+                if not record.get("skipped") and not record.get("rejected"):
+                    lines.append("  - nothing weighed or rejected was reported")
             if record.get("error"):
                 lines.append(f"- {split} {record['case_id']} error: {record['error']}")
             elif v.get("error"):

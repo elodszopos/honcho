@@ -184,12 +184,27 @@ class AdmissionDecision(ExplicitObservationBase):
     )
 
 
+class RejectedCase(BaseModel):
+    """An admission case left out, with the rule that excluded it."""
+
+    admission_case_id: int = Field(
+        ge=0,
+        description="The admission case identifier supplied in the prompt.",
+    )
+    reason: str = Field(
+        min_length=1,
+        max_length=160,
+        description="One clause: the rule that excludes this candidate.",
+    )
+
+
 class AdmissionRepresentation(BaseModel):
     """Batched admission decisions returned by the admission LLM call."""
 
     explicit: list[AdmissionDecision] = Field(default_factory=list)
+    rejected: list[RejectedCase] = Field(default_factory=list)
 
-    @field_validator("explicit", mode="before")
+    @field_validator("explicit", "rejected", mode="before")
     @classmethod
     def convert_none_to_empty_list(cls, value: Any) -> Any:
         return [] if value is None else value
@@ -204,12 +219,27 @@ class ExtractedObservation(BaseModel):
     )
 
 
+class SkippedStatement(BaseModel):
+    """A statement about the user that extraction weighed and left out."""
+
+    statement: str = Field(
+        max_length=MAX_CONCLUSION_CHARS,
+        description="The statement as weighed",
+    )
+    reason: str = Field(
+        min_length=1,
+        max_length=160,
+        description="One clause: the rule that excludes it.",
+    )
+
+
 class ExtractedRepresentation(BaseModel):
     """Candidate observations produced before collection search and admission."""
 
     explicit: list[ExtractedObservation] = Field(default_factory=list)
+    skipped: list[SkippedStatement] = Field(default_factory=list)
 
-    @field_validator("explicit", mode="before")
+    @field_validator("explicit", "skipped", mode="before")
     @classmethod
     def convert_none_to_empty_list(cls, value: Any) -> Any:
         return [] if value is None else value

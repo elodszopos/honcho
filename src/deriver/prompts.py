@@ -87,6 +87,7 @@ _ADMISSION_RULES = c(
     - Write `reason_for_entry` as one clause under 120 characters: what the memory is for.
     - Return no decision for a case when the messages do not justify durable memory.
     - Return all admitted cases together in one `explicit` list.
+    - Put every case you do not admit in `rejected`, with its `admission_case_id` and the rule that excludes it as one clause.
 
     SOURCE-GROUNDING RULES:
     - Re-read the original messages before deciding.
@@ -151,6 +152,7 @@ WHAT A CONCLUSION IS:
 WHEN TO EXTRACT:
 - Extract a conclusion when it is still true and useful a month from now, beyond the task at hand.
 - Extract nothing whose topic cannot be named; a conclusion without a topic is not one.
+- A one-time detail can show a lasting fact about the user; extract the lasting fact the messages plainly show and leave the detail.
 - Keep one wording per fact, the most general accurate one.
 - Merge two candidates that say the same thing into one.
 - Small talk, acknowledgements and status updates yield nothing.
@@ -172,6 +174,7 @@ NEVER EXTRACT:
 - Credentials, or anything else that unlocks an account.
 - What is true only for now or for one occasion: a status, a task in progress, what happened or was decided once, and its figures.
   - How the user wants every such occasion handled can qualify.
+  - A state that holds until something changes is a conclusion; a status is what will be different within days.
 - What another owner already holds by nature:
   - How a task is carried out, and when to use a skill or job, belong to the skill or job that does it.
     - What the user runs, uses, chose or plans around that work stays a conclusion.
@@ -182,8 +185,12 @@ NEVER EXTRACT:
   - A trip's plans and history belong to the trip project, and travel preferences to the travel persona; this never reaches beyond travel.
   - Facts fetched from outside the conversation belong to their source.
 - The act of asking, acknowledging or recording; extract the content, never the act.
+  - Asking for something once says nothing lasting about how the user works.
 - Text copied from tool output or a report.
 - Guesses and invented specifics.
+
+WHAT YOU LEAVE OUT:
+- Put each statement about the user that you weighed and did not extract in `skipped`, with the rule that excludes it as one clause.
 
 <examples>
 Fabricated illustrations of the rules. Never emit a conclusion whose content comes from an example; every conclusion must be supported by the <messages> block only.
@@ -195,6 +202,7 @@ EXTRACT:
 - "remember that I lent Dan my ladder" → "The user lent their ladder to Dan." (an explicit request to remember)
 - assistant: "Let's schedule a nightly router reboot." / user: "no, the alarm system runs through that router, a reboot takes it offline" → "The user's home alarm system runs through their router; rebooting the router takes the alarm offline." (what the user relies on)
 - "My sister Maya just moved to Lisbon" → "The user's sister, Maya, lives in Lisbon."
+- "dropping the kids at swimming practice before work again" → "The user's children attend swimming practice." (the lasting fact a one-time detail shows)
 - "the accountant files the quarterly VAT return, I only send her the invoices" → "For taxes, the user's accountant files the quarterly VAT return; the user sends her the invoices."
 - "from now on, always run the test suite before telling me something is done" → "The user requires the test suite to be run before work is declared done."
 - "I always travel with my husband; on road trips we take the camper" → "The user has a husband." (only the cross-domain fact; who comes along and what they drive on trips belong to the travel persona)
