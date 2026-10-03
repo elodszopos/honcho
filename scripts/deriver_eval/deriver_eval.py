@@ -36,7 +36,7 @@ REPLAY_CACHE_KEY = "deriver-eval"
 JUDGE_CACHE_KEY = "deriver-eval-judge"
 CONCURRENCY = 4
 JUDGE_BATCH = 8
-RUBRIC_VERSION = "1"
+RUBRIC_VERSION = "2"
 
 JUDGE_RUBRIC = """
 ROLE:
@@ -45,6 +45,7 @@ ROLE:
 INPUT, PER CASE:
 - `must`: facts that should be stored, numbered from 0.
 - `may`: facts that are acceptable either way.
+- `held`: facts the assistant already sees in every prompt; storing one repeats it.
 - `stored`: what the extractor stored, numbered from 0.
 
 GRADING:
@@ -53,7 +54,7 @@ GRADING:
 - Give every stored item exactly one verdict:
   - `must`, with `must_index`, when it matches a must fact.
   - `may` when it matches a may fact.
-  - `duplicate` when another stored item of the same case already covers its fact.
+  - `duplicate` when it matches a held fact, or another stored item of the same case already covers its fact.
   - `garbage` otherwise, with the category that describes it best.
 - List in `missed_must` every must index that no stored item covers.
 - Judge meaning, never shared vocabulary.
@@ -260,7 +261,13 @@ async def replay_case(
 
 def judge_key(label: dict[str, Any], stored: list[str]) -> str:
     blob = json.dumps(
-        [RUBRIC_VERSION, label.get("must", []), label.get("may", []), stored]
+        [
+            RUBRIC_VERSION,
+            label.get("must", []),
+            label.get("may", []),
+            label.get("held", []),
+            stored,
+        ]
     )
     return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -298,6 +305,7 @@ async def judge_records(
                     "case_id": p["record"]["case_id"],
                     "must": p["label"].get("must", []),
                     "may": p["label"].get("may", []),
+                    "held": p["label"].get("held", []),
                     "stored": p["record"]["stored"],
                 }
                 for p in batch
@@ -441,13 +449,13 @@ def write_report(
         lines += [
             f"## {split}",
             "",
-            "| run | cases | stored | garbage rate | miss rate | clean nothing | errors |",
-            "|---|---|---|---|---|---|---|",
+            "| run | cases | stored | garbage rate | duplicates | miss rate | clean nothing | errors |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for k, (records, verdicts) in enumerate(per_run, 1):
             m = run_metrics(records, verdicts, labels)
             lines.append(
-                f"| {k} | {m['cases']} | {m['stored']} | {m['garbage_rate']:.1%} | {m['miss_rate']:.1%} | {m['clean_nothing_cases']} | {m['errors']} |"
+                f"| {k} | {m['cases']} | {m['stored']} | {m['garbage_rate']:.1%} | {m['duplicates']} | {m['miss_rate']:.1%} | {m['clean_nothing_cases']} | {m['errors']} |"
             )
             all_verdicts.append((split, k, records, verdicts, m))
         flips = flip_metrics([v for _, v in per_run], labels)

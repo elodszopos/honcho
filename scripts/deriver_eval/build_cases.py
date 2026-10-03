@@ -175,6 +175,7 @@ async def build(
                 "case_id": case_id,
                 "must": must,
                 "may": may,
+                "held": [],
                 "rejected": rejected,
                 "ruled_by": "draft",
             }
