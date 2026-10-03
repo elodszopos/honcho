@@ -114,6 +114,10 @@ def test_conclusions_cover_the_user_their_standing_rules_and_their_topics() -> N
         in prompt
     )
     assert (
+        "A capability the assistant does not have yet is a change request, not a preference."
+        in prompt
+    )
+    assert (
         "How the user wants to be told things, whatever job or feature produces them."
         in prompt
     )
@@ -121,6 +125,7 @@ def test_conclusions_cover_the_user_their_standing_rules_and_their_topics() -> N
     assert "Extract nothing whose topic cannot be named" in prompt
     assert "Any area of life qualifies." in prompt
     assert "Name the topic inside the conclusion" in prompt
+    assert "Naming a topic never turns a change request into a preference." in prompt
     assert "still true and useful a month from now, beyond the task at hand" in prompt
     assert "Merge two candidates that say the same thing into one." in prompt
     assert "A one-time detail can show a lasting fact about the user" in prompt
@@ -167,7 +172,6 @@ def test_never_extract_sends_occasions_and_owned_facts_elsewhere() -> None:
         "A state that holds until something changes is a conclusion; a status is what"
         in prompt
     )
-    assert "Asking for something once says nothing lasting" in prompt
     assert "What another owner already holds by nature:" in prompt
     assert "belong to the skill or job that does it" in prompt
     assert (
@@ -176,7 +180,14 @@ def test_never_extract_sends_occasions_and_owned_facts_elsewhere() -> None:
     )
     assert "Configured values belong to configuration." in prompt
     assert "How a system, tool or piece of code works or behaved" in prompt
-    assert "that belongs to the system's backlog, not to memory." in prompt
+    assert (
+        "is a change request for that system's backlog, however it is phrased."
+        in prompt
+    )
+    assert (
+        "What stays true about the user once the change is built is still a conclusion."
+        in prompt
+    )
     assert "Rules about what memory holds belong to the memory doctrine." in prompt
     assert "The act of asking, acknowledging or recording" in prompt
     assert "that you weighed and did not extract in `skipped`" in prompt

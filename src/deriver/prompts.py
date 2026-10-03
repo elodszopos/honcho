@@ -145,6 +145,7 @@ TARGET PEER AND MESSAGES:
 WHAT A CONCLUSION IS:
 - Something about the user that stays true: who they are, the people in their life, what they have, how they live and work, what they prefer.
 - How the user wants things done for them from now on, across their work or life, as opposed to how one task went.
+  - A capability the assistant does not have yet is a change request, not a preference.
 - How the user wants to be told things, whatever job or feature produces them.
 - What the user runs, uses, relies on or cares about, and why.
 - A later pass files always-relevant ones elsewhere; extract them here.
@@ -160,6 +161,7 @@ WHEN TO EXTRACT:
 HOW TO WRITE ONE:
 - Name the topic inside the conclusion ("For taxes, ...", "The user's garden ...").
   - Why: a conclusion is found by its topic.
+  - Naming a topic never turns a change request into a preference.
 - State one fact per conclusion.
 - Keep a conclusion under 30 words; a second fact is a second conclusion.
 - Make it self-contained: understandable months later without the conversation.
@@ -180,12 +182,12 @@ NEVER EXTRACT:
     - What the user runs, uses, chose or plans around that work stays a conclusion.
   - Configured values belong to configuration.
   - How a system, tool or piece of code works or behaved, and design decisions for one system, belong to its code and docs.
-    - So does a change the user asks for in it; that belongs to the system's backlog, not to memory.
+  - A capability the user asks the assistant or a system they run to gain is a change request for that system's backlog, however it is phrased.
+    - What stays true about the user once the change is built is still a conclusion.
   - Rules about what memory holds belong to the memory doctrine.
   - A trip's plans and history belong to the trip project, and travel preferences to the travel persona; this never reaches beyond travel.
   - Facts fetched from outside the conversation belong to their source.
 - The act of asking, acknowledging or recording; extract the content, never the act.
-  - Asking for something once says nothing lasting about how the user works.
 - Text copied from tool output or a report.
 - Guesses and invented specifics.
 

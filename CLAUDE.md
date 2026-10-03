@@ -167,6 +167,8 @@ the only test anywhere that proves the pipeline works with a real model rather t
 Run it after any change to the deriver, the admission path, the prompt, or the conclusion schema.
 A mocked suite cannot catch a prompt that stopped carrying what the model needs to cite.
 
+What the deriver stores from real chats is measured by the deriver eval: `.claude/docs/deriver-eval.md`.
+
 The `--live` mode exists because two things differ from a hermetic run. The provider URLs in `.env`
 name the compose network, so a host run has to reach them on loopback, and the fixture vector width
 must stay unset or the real embedding model's answer is rejected. `tests/live_llm/` also sits in
@@ -244,6 +246,7 @@ The Deriver processes batches of incoming messages and extracts conclusions abou
 
 - **Trigger**: Messages enqueued by `src/deriver/enqueue.py` on message create; consumed by `src/deriver/queue_manager.py` → `consumer.process_item()` → `deriver.process_representation_tasks_batch()`.
 - **Output**: Explicit conclusions (direct facts) and deductive conclusions (inferences) saved to `(observer, observed)` collections.
+- **What it leaves out**: extraction returns the statements it weighed and did not extract, admission the candidates it refused, each with the excluding rule. Neither is stored; each batch logs them as `deriver.batch left_out` and `deriver.batch rejected`.
 - **Entry point**: `src/deriver/__main__.py` → `queue_manager.main()`.
 - **Prompts**: `src/deriver/prompts.py` (`deriver_messages`): the rules go out as the system turn and the batch as the user turn, so the rules cache across calls. The workspace's curated files follow the rules, each inside a `<file>` tag named after it, in the order `CURATED_MEMORY_PATHS` lists the files mounted into the container, steadiest first; the deriver never extracts what they state. The admission pass appends its own rules after them, so extraction and admission of one batch share one cached prefix. The same block closes the automatic answer's system prompt. The Codex backend caches a prefix only from about 2048 tokens: a workspace without a curated file has a 1.8k-token extraction prefix and never hits.
 - **Custom instructions**: per-workspace/peer guidance can be threaded into the prompt via reasoning configuration; `DERIVER__MAX_CUSTOM_INSTRUCTIONS_TOKENS` caps the addition (default 2000) and `DERIVER__MAX_INPUT_TOKENS` defaults to 25000 to make room.

@@ -171,7 +171,10 @@ overrides say nothing about what a merge would revert. The assertion lives in
 - `honcho conclusion create` takes the JSON admission payload whole and refuses plain text;
   upstream's content-only create cannot pass the admission contract.
 - `ExtractedRepresentation` and `AdmissionRepresentation` are the two response models; the
-  structured-output repair path treats both as representation models.
+  structured-output repair path treats both as representation models. Extraction also returns
+  what it weighed and left out, and admission what it refused, each with the excluding rule, and
+  the deriver logs both per batch; upstream returns only what it keeps, so an over-excluding rule
+  leaves no trace.
 - Every batch message reaches the deriver inside upstream's `<message>` tag carrying one extra
   attribute, `message_id`. The admission pass cites database ids in `source_message_ids`, and
   upstream's `idx` is batch position, which resolves against nothing.
@@ -180,6 +183,10 @@ overrides say nothing about what a merge would revert. The assertion lives in
   agreed with or asked to remember. What holds for one occasion, and what another owner holds by
   nature, is never a conclusion; upstream extracts any atomic fact. Rules state outcomes and
   examples are invented, never the user's own data. Custom instructions only narrow extraction.
+- The deriver and the automatic answer read the assistant's own memory files, listed per workspace
+  in `CURATED_MEMORY.PATHS`, each in a `<file>` tag after the rules; the deriver never extracts
+  what they state and the answer never restates it. Upstream has no notion of what the assistant
+  already carries, so it re-extracts that into the pool.
 - The dialectic prompt is written for machine consumption: front-loaded answer, no second
   person, no questions, `Unknown: <specific gap>` for missing evidence, contradictions
   stated rather than asked about.
