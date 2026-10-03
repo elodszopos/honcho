@@ -175,10 +175,11 @@ overrides say nothing about what a merge would revert. The assertion lives in
 - Every batch message reaches the deriver inside upstream's `<message>` tag carrying one extra
   attribute, `message_id`. The admission pass cites database ids in `source_message_ids`, and
   upstream's `idx` is batch position, which resolves against nothing.
-- The deriver prompt is a four-criteria selective-extraction contract with an enumerated
-  exclusion taxonomy, an outcome-over-process rule, and travel-scope exclusions. Zero
-  extractions is the expected output for an ordinary turn. Custom instructions may narrow
-  extraction and never relax the exclusions.
+- The deriver extracts what stays true about the user, how they want things done from now on and
+  what they rely on, from the user's own words or an assistant statement the user explicitly
+  agreed with or asked to remember. What holds for one occasion, and what another owner holds by
+  nature, is never a conclusion; upstream extracts any atomic fact. Rules state outcomes and
+  examples are invented, never the user's own data. Custom instructions only narrow extraction.
 - The dialectic prompt is written for machine consumption: front-loaded answer, no second
   person, no questions, `Unknown: <specific gap>` for missing evidence, contradictions
   stated rather than asked about.

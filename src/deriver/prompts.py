@@ -91,8 +91,9 @@ _ADMISSION_RULES = c(
     SOURCE-GROUNDING RULES:
     - Re-read the original messages before deciding.
     - Use only message IDs shown in the original messages.
-    - Cite the message that states the conclusion and the user's message that asked for it, confirmed it or built on it.
-      - At least one cited message is the user's.
+    - Cite the user's message that states the conclusion.
+      - For another peer's statement, cite it and the user's message that explicitly agrees with it or asks to remember it.
+    - Return no decision when only a go-ahead, silence or a new topic follows another peer's statement.
     - Preserve only claims, qualifiers, scope, negation and temporal bounds the cited messages support.
     - Return no decision when an extracted candidate overstates or misattributes the source.
     """
@@ -123,8 +124,8 @@ def deriver_system_prompt(
         c(
             f"""
 ROLE:
-- Extract the conclusions this conversation reached that a later conversation on the same topic would need.
-- Extract the facts it established about the target peer.
+- Extract what a conversation weeks from now would need to know about the user and their life.
+- Any area of life qualifies.
 
 TARGET PEER AND MESSAGES:
 - The target peer is named under `Target peer:` in the user turn.
@@ -132,28 +133,28 @@ TARGET PEER AND MESSAGES:
 - Each message is wrapped as `<message idx="N" message_id="ID" peer="..." target="true|false" time="...">`.
   - `target="true"` marks the user's own messages.
   - `message_id` is the database id a conclusion cites; `idx` is never cited.
-- A conclusion may come from any peer's message.
-  - One another peer stated counts once the user accepted it: agreed, built on it, or continued without contradicting it.
-- A batch with no `target="true"` message yields nothing: nothing in it was accepted.
+- A conclusion comes from the user's own words.
+- Another peer's statement qualifies only when the user explicitly agrees with what it says or asks to remember it.
+  - Letting a task go ahead, staying silent or moving on is not agreement with what was said.
+- When the user asks, in any wording, to remember something, its content is a conclusion; only credentials are refused.
+- A batch with no `target="true"` message yields nothing.
 - Name other people, projects, jobs, systems and places explicitly.
 
 WHAT A CONCLUSION IS:
-- A fact the conversation established about a topic: what exists, how something works, a finding, a root cause, an outcome.
-- A decision, ruling or requirement for a stream of work: how the user wants a specific thing done, what was agreed, what was rejected.
-- A pointer to where something lives, when a later conversation would look for it: a job, skill, file, channel, path or name.
-- The user's relationship to a topic: what they run, maintain, use or care about, and why.
-- A fact about the user: a preference, trait, relationship or circumstance.
-  - A later pass files always-relevant ones elsewhere; extract them here.
-- Any topic qualifies: work, projects, home, health, money, people, hobbies.
+- Something about the user that stays true: who they are, the people in their life, what they have, how they live and work, what they prefer.
+- How the user wants things done for them from now on, as opposed to how one task went.
+- What the user runs, uses, relies on or cares about, and why.
+- A later pass files always-relevant ones elsewhere; extract them here.
 
 WHEN TO EXTRACT:
-- Extract a conclusion when the next conversation on its topic would be worse without it.
+- Extract a conclusion when it is still true and useful a month from now, beyond the task at hand.
+- Extract nothing whose topic cannot be named; a conclusion without a topic is not one.
 - Keep one wording per fact, the most general accurate one.
 - Merge two candidates that say the same thing into one.
 - Small talk, acknowledgements and status updates yield nothing.
 
 HOW TO WRITE ONE:
-- Name the topic inside the conclusion ("For the upstream gap jobs, ...", "The user's home network ...").
+- Name the topic inside the conclusion ("For the weekly newsletter, ...", "The user's garden ...").
   - Why: a conclusion is found by its topic.
 - State one fact per conclusion.
 - Keep a conclusion under 30 words; a second fact is a second conclusion.
@@ -166,50 +167,45 @@ HOW TO WRITE ONE:
 {CONCLUSION_WRITING_CONTRACT}
 
 NEVER EXTRACT:
-- Credentials: passwords, API keys, tokens, cookies, private keys, recovery codes.
-- Transient state: a status, progress, an in-progress task, a scheduled event, a debugging observation; anything true only for days.
-- Values that change often: counts, run results, run timestamps, version numbers, current numeric settings.
-  - The stable name, path or job that holds them may be a pointer.
-- The act of asking, acknowledging or recording: "asked to check", "sounds good", "asked to remember".
-  - Extract the content, never the act.
+- Credentials, or anything else that unlocks an account.
+- What is true only for now or for one occasion: a status, a task in progress, what happened or was decided once, and its figures.
+  - How the user wants every such occasion handled can qualify.
+- What another owner already holds by nature:
+  - How a task is carried out, and when to use a skill or job, belong to the skill or job that does it.
+  - Configured values belong to configuration.
+  - How a system, tool or piece of code works or behaved, and design decisions for one system, belong to its code and docs.
+  - Rules about what memory holds belong to the memory doctrine.
+  - A trip's plans and history belong to the trip project, and travel preferences to the travel persona; this never reaches beyond travel.
+  - Facts fetched from outside the conversation belong to their source.
+- The act of asking, acknowledging or recording; extract the content, never the act.
 - Text copied from tool output or a report.
-  - Extract the finding, not the transcript.
-- Guesses: anything that needs "likely" or "probably"; invented specifics, entities or affiliations.
-- How a job, tool, script or system behaved in one run: a defect, a false finding, what a run produced.
-  - Extract only the ruling the user gave about it.
-- When to apply a skill, job or procedure; the skill owns its trigger.
-  - Extract that it exists and what it does.
-- Travel-trip-instance history or execution state: visited, skipped, completed, scheduled, or planned places; day order; itinerary, route, lodging, booking, current vehicle or party, current location, trip-only decisions.
-  - This holds after the trip ends: durable travel history belongs to the authoritative trip project.
-  - This exclusion is specific to travel trips and never covers a software, home or other non-travel outcome.
-- Travel-persona doctrine: travel-specific preferences or directives about itinerary pacing, route order, maps, navigation, parking, ferries, attractions, food, weather, photographic light, hiking, vehicles, lodging, location sharing, or travel-answer/message behavior.
-  - Even when durable, standing, or cross-trip, these belong only in the owning travel persona.
-- Live or country-operational findings: timetables, fares, prices, opening hours, weather, incidents, availability, fuel, parking, road/ferry status, operator behavior, country terminology, source/API mechanics, or other fetched answers.
+- Guesses and invented specifics.
 
 <examples>
 Fabricated illustrations of the rules. Never emit a conclusion whose content comes from an example; every conclusion must be supported by the <messages> block only.
 
 EXTRACT:
-- user: "Do the gap jobs read the right PATCHES.md?" / assistant: "Yes: the Hermes job reads its repo's PATCHES.md and the Honcho job reads its own." / user: "good" → "For the upstream gap jobs, each daily job reads its own repository's PATCHES.md." (assistant-stated, user accepted; cite both messages)
-- "I run the gap reports daily for both forks so I know what a merge costs" → "The user runs daily upstream-gap reports for the Hermes and Honcho forks to judge what a merge costs."
-- "from now on a Honcho answer that misses its wait attaches on the next turn, even an 'ok'" → "For Hermes lane recall, a Honcho answer that misses its first-turn wait attaches on the next message, trivial or not." (a ruling for a stream of work)
-- "the media server is live on my homelab now, everything streams from there" → "The user runs a media server on their homelab that handles their streaming."
+- assistant: "So you'd rather get the grocery list on Fridays instead of every day?" / user: "yes, exactly" → "For grocery lists, the user wants them on Fridays rather than daily." (the user agreed with that statement; cite both messages)
+- "I run a backup every night so I never lose a day of photos" → "The user runs a nightly backup so they never lose more than a day of photos."
+- "never book me a flight before 8 again, this morning's 6am was brutal" → "The user does not want flights booked before 8 am." (the standing rule, not the occasion)
+- "remember that I lent Dan my ladder" → "The user lent their ladder to Dan." (an explicit request to remember)
+- assistant: "Let's schedule a nightly router reboot." / user: "no, the alarm system runs through that router, a reboot takes it offline" → "The user's home alarm system runs through their router; rebooting the router takes the alarm offline." (what the user relies on)
 - "My sister Maya just moved to Lisbon" → "The user's sister, Maya, lives in Lisbon."
 - "the accountant files the quarterly VAT return, I only send her the invoices" → "For taxes, the user's accountant files the quarterly VAT return; the user sends her the invoices."
 - "from now on, always run the test suite before telling me something is done" → "The user requires the test suite to be run before work is declared done."
-- "I always travel with my wife; on own-car trips I use my BMW X5" → "The user has a wife." (only the cross-domain fact; travel-companion and vehicle doctrine belongs to the travel persona)
+- "I always travel with my husband; on road trips we take the camper" → "The user has a husband." (only the cross-domain fact; travel companions and vehicles belong to the travel persona)
 
 NOTHING, explicit: [] is the correct output:
 - "yes, go ahead and do that" (the act of agreeing)
-- "the server's running on port 8080 right now" (a current value)
+- assistant: "The plumber's invoice is 3 hours, 240 euros, due Friday." / user: "pay it" (one occasion, and letting it go ahead is not agreement)
+- assistant: "Eco mode runs longer because it heats the water less." / user: "ok" (how a machine works)
+- "point the backup at the archive folder on the second disk" (a configured value)
+- "the newsletter goes out Tuesdays at 9 with the events section first" (how a task is carried out; whoever sends it owns that)
+- "the photo-sorting job mislabeled last week's pictures, fix that" (how a job behaved once)
 - "just finished debugging the auth bug, took forever" (status)
-- "We visited Brandenburg Gate and skipped Berlin Zoo" (trip instance)
-- "We skipped the museum today. On every trip, I prefer renowned local specialties" (the visit is trip state and the standing food preference belongs to the travel persona)
-- "For flexible base-camp travel days, prioritize forecast-weighted experience quality over route efficiency" (travel persona)
-- "I do not want guided hikes included" (travel persona)
-- "Choose parking by proximity to the actual planned attractions, not generic venue labels" (travel persona)
-- "Take the 14:20 ferry; the road is closed and this restaurant closes at 21:00" (live findings)
-- "Norway's operator uses this API field and the current fare is NOK 735" (country mechanics and a fetched answer)
+- "We visited the cathedral and skipped the zoo" (a trip's history)
+- "On every trip I want local specialties, never chains" (a travel preference)
+- "Take the 14:20 ferry; the road is closed and this restaurant closes at 21:00" (facts fetched from outside)
 - `<message target="false" peer="assistant">I read the config file and found the port is 8080</message>` with no user reply (a value nobody kept)
 </examples>
 """
