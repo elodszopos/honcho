@@ -1236,13 +1236,13 @@ class DialecticSettings(HonchoSettings):
 
 
 class CuratedMemorySettings(HonchoSettings):
-    """Per-workspace path of the user's curated memory file, read into prompt static blocks."""
+    """Per-workspace files the assistant already carries, in prompt order, read into static blocks."""
 
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="CURATED_MEMORY_", env_nested_delimiter="__", extra="ignore"
     )
 
-    PATHS: dict[str, str] = Field(default_factory=dict)
+    PATHS: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class SummarySettings(HonchoSettings):

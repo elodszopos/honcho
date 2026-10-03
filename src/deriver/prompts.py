@@ -103,10 +103,11 @@ _ADMISSION_RULES = c(
 _CURATED_MEMORY_RULES = c(
     """
     REFERENCE, NEVER A SOURCE:
-    - The USER.md block below is what the assistant already knows about the user.
-    - Use it only to recognise a fact that is already held.
-    - Never extract a fact the USER.md block already states.
-    - Extract nothing from it; every conclusion comes from the <messages> block alone.
+    - The <file> blocks below are what the assistant already knows about the user and already follows in every reply.
+    - Use them only to recognise a fact that is already held.
+    - Skip a fact only when a <file> block states that same fact; sharing a topic is not holding it.
+    - When unsure whether a block already holds a fact, extract it.
+    - Extract nothing from them; every conclusion comes from the <messages> block alone.
     """
 )
 
@@ -142,7 +143,8 @@ TARGET PEER AND MESSAGES:
 
 WHAT A CONCLUSION IS:
 - Something about the user that stays true: who they are, the people in their life, what they have, how they live and work, what they prefer.
-- How the user wants things done for them from now on, as opposed to how one task went.
+- How the user wants things done for them from now on, across their work or life, as opposed to how one task went.
+- How the user wants to be told things, whatever job or feature produces them.
 - What the user runs, uses, relies on or cares about, and why.
 - A later pass files always-relevant ones elsewhere; extract them here.
 
@@ -154,7 +156,7 @@ WHEN TO EXTRACT:
 - Small talk, acknowledgements and status updates yield nothing.
 
 HOW TO WRITE ONE:
-- Name the topic inside the conclusion ("For the weekly newsletter, ...", "The user's garden ...").
+- Name the topic inside the conclusion ("For taxes, ...", "The user's garden ...").
   - Why: a conclusion is found by its topic.
 - State one fact per conclusion.
 - Keep a conclusion under 30 words; a second fact is a second conclusion.
@@ -172,8 +174,10 @@ NEVER EXTRACT:
   - How the user wants every such occasion handled can qualify.
 - What another owner already holds by nature:
   - How a task is carried out, and when to use a skill or job, belong to the skill or job that does it.
+    - What the user runs, uses, chose or plans around that work stays a conclusion.
   - Configured values belong to configuration.
   - How a system, tool or piece of code works or behaved, and design decisions for one system, belong to its code and docs.
+    - So does a change the user asks for in it; that belongs to the system's backlog, not to memory.
   - Rules about what memory holds belong to the memory doctrine.
   - A trip's plans and history belong to the trip project, and travel preferences to the travel persona; this never reaches beyond travel.
   - Facts fetched from outside the conversation belong to their source.
@@ -185,7 +189,7 @@ NEVER EXTRACT:
 Fabricated illustrations of the rules. Never emit a conclusion whose content comes from an example; every conclusion must be supported by the <messages> block only.
 
 EXTRACT:
-- assistant: "So you'd rather get the grocery list on Fridays instead of every day?" / user: "yes, exactly" → "For grocery lists, the user wants them on Fridays rather than daily." (the user agreed with that statement; cite both messages)
+- assistant: "So when something breaks, you'd rather hear the bad news first and the fix after?" / user: "yes, exactly" → "When told about a problem, the user wants the bad news first, then the fix." (the user agreed with that statement; cite both messages)
 - "I run a backup every night so I never lose a day of photos" → "The user runs a nightly backup so they never lose more than a day of photos."
 - "never book me a flight before 8 again, this morning's 6am was brutal" → "The user does not want flights booked before 8 am." (the standing rule, not the occasion)
 - "remember that I lent Dan my ladder" → "The user lent their ladder to Dan." (an explicit request to remember)
@@ -193,7 +197,7 @@ EXTRACT:
 - "My sister Maya just moved to Lisbon" → "The user's sister, Maya, lives in Lisbon."
 - "the accountant files the quarterly VAT return, I only send her the invoices" → "For taxes, the user's accountant files the quarterly VAT return; the user sends her the invoices."
 - "from now on, always run the test suite before telling me something is done" → "The user requires the test suite to be run before work is declared done."
-- "I always travel with my husband; on road trips we take the camper" → "The user has a husband." (only the cross-domain fact; travel companions and vehicles belong to the travel persona)
+- "I always travel with my husband; on road trips we take the camper" → "The user has a husband." (only the cross-domain fact; who comes along and what they drive on trips belong to the travel persona)
 
 NOTHING, explicit: [] is the correct output:
 - "yes, go ahead and do that" (the act of agreeing)
@@ -202,6 +206,7 @@ NOTHING, explicit: [] is the correct output:
 - "point the backup at the archive folder on the second disk" (a configured value)
 - "the newsletter goes out Tuesdays at 9 with the events section first" (how a task is carried out; whoever sends it owns that)
 - "the photo-sorting job mislabeled last week's pictures, fix that" (how a job behaved once)
+- "the thermostat app should let me copy Monday's schedule to Tuesday" (a change wanted in an app; it belongs to the app, not memory)
 - "just finished debugging the auth bug, took forever" (status)
 - "We visited the cathedral and skipped the zoo" (a trip's history)
 - "On every trip I want local specialties, never chains" (a travel preference)

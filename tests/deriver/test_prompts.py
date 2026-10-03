@@ -109,7 +109,14 @@ def test_conclusions_cover_the_user_their_standing_rules_and_their_topics() -> N
 
     assert "WHAT A CONCLUSION IS:" in prompt
     assert "Something about the user that stays true" in prompt
-    assert "How the user wants things done for them from now on, as opposed to how one task went." in prompt
+    assert (
+        "How the user wants things done for them from now on, across their work or life"
+        in prompt
+    )
+    assert (
+        "How the user wants to be told things, whatever job or feature produces them."
+        in prompt
+    )
     assert "What the user runs, uses, relies on or cares about, and why." in prompt
     assert "Extract nothing whose topic cannot be named" in prompt
     assert "Any area of life qualifies." in prompt
@@ -129,10 +136,19 @@ def test_conclusions_come_from_the_users_words_or_explicit_agreement() -> None:
     )
 
     assert "A conclusion comes from the user's own words." in prompt
-    assert "only when the user explicitly agrees with what it says or asks to remember it" in prompt
-    assert "Letting a task go ahead, staying silent or moving on is not agreement" in prompt
+    assert (
+        "only when the user explicitly agrees with what it says or asks to remember it"
+        in prompt
+    )
+    assert (
+        "Letting a task go ahead, staying silent or moving on is not agreement"
+        in prompt
+    )
     assert "When the user asks, in any wording, to remember something" in prompt
-    assert "Return no decision when only a go-ahead, silence or a new topic follows" in prompt
+    assert (
+        "Return no decision when only a go-ahead, silence or a new topic follows"
+        in prompt
+    )
     assert "continued without contradicting it" not in prompt
     assert "`reason_for_entry` as one clause under 120 characters" in prompt
 
@@ -147,11 +163,19 @@ def test_never_extract_sends_occasions_and_owned_facts_elsewhere() -> None:
     assert "How the user wants every such occasion handled can qualify." in prompt
     assert "What another owner already holds by nature:" in prompt
     assert "belong to the skill or job that does it" in prompt
+    assert (
+        "What the user runs, uses, chose or plans around that work stays a conclusion."
+        in prompt
+    )
     assert "Configured values belong to configuration." in prompt
     assert "How a system, tool or piece of code works or behaved" in prompt
+    assert "that belongs to the system's backlog, not to memory." in prompt
     assert "Rules about what memory holds belong to the memory doctrine." in prompt
     assert "The act of asking, acknowledging or recording" in prompt
-    assert "Keep a conclusion under 30 words; a second fact is a second conclusion." in prompt
+    assert (
+        "Keep a conclusion under 30 words; a second fact is a second conclusion."
+        in prompt
+    )
     assert "OWNER GATE" not in prompt
     assert "ZERO extractions" not in prompt
 
@@ -163,7 +187,7 @@ def test_rules_go_to_the_system_turn_and_the_batch_to_the_user_turn() -> None:
         existing_conclusions="candidate-1: Alice likes tea.",
         candidate_observation="Alice prefers unsweetened tea.",
         custom_instructions="Prefer concrete timeline facts.",
-        curated_memory="## USER.md\nAlice is vegetarian.",
+        curated_memory='<file name="USER.md">\nAlice is vegetarian.\n</file>',
     )
 
     assert system["role"] == "system" and user["role"] == "user"
@@ -171,7 +195,7 @@ def test_rules_go_to_the_system_turn_and_the_batch_to_the_user_turn() -> None:
     assert "MANDATORY LOOK-BEFORE-WRITE ADMISSION:" in system["content"]
     assert "Prefer concrete timeline facts." in system["content"]
     content = system["content"]
-    assert content.index("## USER.md\nAlice is vegetarian.") < content.index(
+    assert content.index('<file name="USER.md">\nAlice is vegetarian.') < content.index(
         "MANDATORY LOOK-BEFORE-WRITE ADMISSION:"
     )
     assert content.rstrip().endswith("overstates or misattributes the source.")
@@ -179,12 +203,19 @@ def test_rules_go_to_the_system_turn_and_the_batch_to_the_user_turn() -> None:
         peer_id="alice",
         messages="alice: hello",
         custom_instructions="Prefer concrete timeline facts.",
-        curated_memory="## USER.md\nAlice is vegetarian.",
+        curated_memory='<file name="USER.md">\nAlice is vegetarian.\n</file>',
     )
     assert content.startswith(extraction_system["content"])
     assert "REFERENCE, NEVER A SOURCE:" in system["content"]
-    assert "Never extract a fact the USER.md block already states." in system["content"]
-    assert "Extract nothing from it" in system["content"]
+    assert (
+        "Skip a fact only when a <file> block states that same fact; sharing a topic is not holding it."
+        in system["content"]
+    )
+    assert (
+        "When unsure whether a block already holds a fact, extract it."
+        in system["content"]
+    )
+    assert "Extract nothing from them" in system["content"]
     assert 'message_id="7"' in user["content"]
     assert "Alice prefers unsweetened tea." in user["content"]
     assert "candidate-1: Alice likes tea." in user["content"]
@@ -195,7 +226,7 @@ def test_extraction_turn_carries_no_admission_rules() -> None:
     system, _user = deriver_messages(peer_id="alice", messages="alice: hello")
 
     assert "MANDATORY LOOK-BEFORE-WRITE ADMISSION:" not in system["content"]
-    assert "## USER.md" not in system["content"]
+    assert '<file name="' not in system["content"]
 
 
 def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> None:
@@ -210,7 +241,10 @@ def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> 
 def test_estimate_deriver_prompt_tokens_counts_the_curated_memory_block() -> None:
     bare = estimate_deriver_prompt_tokens(None)
     with_memory = estimate_deriver_prompt_tokens(
-        None, "## USER.md\n" + "The user keeps a list of every ferry they took.\n" * 20
+        None,
+        '<file name="USER.md">\n'
+        + "The user keeps a list of every ferry they took.\n" * 20
+        + "</file>",
     )
 
     assert with_memory > bare

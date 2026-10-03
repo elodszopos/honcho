@@ -13,7 +13,7 @@ set +a
 export PYTHON_DOTENV_DISABLED=1
 export PYTHONPATH="$REPO"
 export DB_CONNECTION_URI="${DB_CONNECTION_URI/@database:5432/@127.0.0.1:18732}"
-export CURATED_MEMORY_PATHS="{\"hermes\": \"${DERIVER_EVAL_USER_MD:-$HOME/.hermes/memories/USER.md}\"}"
+export CURATED_MEMORY_PATHS="{\"hermes\": [\"$HOME/.hermes/soul/delivery-contract.md\", \"$HOME/.hermes/memories/MEMORY.md\", \"$HOME/.hermes/memories/USER.md\"]}"
 while IFS= read -r line; do
     name="${line%%=*}"
     value="${line#*=}"

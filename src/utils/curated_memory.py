@@ -1,4 +1,4 @@
-"""The user's curated memory file, appended at the end of a prompt's static block."""
+"""The files the assistant already carries, appended at the end of a prompt's static block."""
 
 import logging
 import os
@@ -13,10 +13,15 @@ _cache: dict[str, tuple[float, str]] = {}
 
 
 def curated_memory_block(workspace_name: str) -> str:
-    """The workspace's USER.md as a labeled block, re-read when the file changes; "" when unset."""
-    path = settings.CURATED_MEMORY.PATHS.get(workspace_name)
-    if not path:
-        return ""
+    """The workspace's curated files as labeled blocks in configured order, each re-read when it changes."""
+    blocks = (
+        _file_block(workspace_name, path)
+        for path in settings.CURATED_MEMORY.PATHS.get(workspace_name, [])
+    )
+    return "\n\n".join(block for block in blocks if block)
+
+
+def _file_block(workspace_name: str, path: str) -> str:
     try:
         mtime = os.stat(path).st_mtime
     except OSError as exc:
@@ -42,7 +47,9 @@ def curated_memory_block(workspace_name: str) -> str:
                 exc,
             )
             return ""
-        block = f"## USER.md\n{text}" if text else ""
+        block = (
+            f'<file name="{os.path.basename(path)}">\n{text}\n</file>' if text else ""
+        )
         _cache[path] = (mtime, block)
         logger.info(
             "curated memory loaded: workspace=%s path=%s chars=%d",

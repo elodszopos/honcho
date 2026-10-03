@@ -20,6 +20,7 @@ from src.deriver.prompts import (
     format_deriver_message,
 )
 from src.llm import honcho_llm_call
+from src.llm.errors import is_transient_llm_error
 from src.utils.curated_memory import curated_memory_block
 from src.utils.representation import (
     AdmissionRepresentation,
@@ -36,7 +37,13 @@ REPLAY_CACHE_KEY = "deriver-eval"
 JUDGE_CACHE_KEY = "deriver-eval-judge"
 CONCURRENCY = 4
 JUDGE_BATCH = 8
-RUBRIC_VERSION = "2"
+RUBRIC_VERSION = "3"
+QUOTA_REACHED = asyncio.Event()
+
+
+class QuotaReached(Exception):
+    pass
+
 
 JUDGE_RUBRIC = """
 ROLE:
@@ -49,8 +56,8 @@ INPUT, PER CASE:
 - `stored`: what the extractor stored, numbered from 0.
 
 GRADING:
-- A stored item matches a label when it states the same fact; wording, detail and order may differ.
-- A stored item that contradicts a label is garbage of category `distorted`.
+- A stored item matches a label when it conveys the same fact; wording, framing, added or missing detail and a date anchor never make it a different fact.
+- A stored item is `distorted` garbage only when what it says contradicts a label.
 - Give every stored item exactly one verdict:
   - `must`, with `must_index`, when it matches a must fact.
   - `may` when it matches a may fact.
@@ -159,18 +166,25 @@ async def llm(
     messages: list[dict[str, Any]],
     response_model: Any,
 ) -> Any:
-    response = await honcho_llm_call(
-        model_config=model_config(cache_key),
-        prompt=messages[-1]["content"],
-        messages=messages,
-        max_tokens=max_tokens(),
-        response_model=response_model,
-        json_mode=True,
-        max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
-        enable_retry=True,
-        retry_attempts=3,
-        trace_name=f"deriver_eval_{pass_name}",
-    )
+    if QUOTA_REACHED.is_set():
+        raise QuotaReached("not called: the provider's usage limit was reached")
+    try:
+        response = await honcho_llm_call(
+            model_config=model_config(cache_key),
+            prompt=messages[-1]["content"],
+            messages=messages,
+            max_tokens=max_tokens(),
+            response_model=response_model,
+            json_mode=True,
+            max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
+            enable_retry=True,
+            retry_attempts=3,
+            trace_name=f"deriver_eval_{pass_name}",
+        )
+    except Exception as exc:
+        if not is_transient_llm_error(exc):
+            QUOTA_REACHED.set()
+        raise
     usage.add(pass_name, response.input_tokens, response.cache_read_input_tokens)
     return response.content
 
@@ -311,19 +325,23 @@ async def judge_records(
                 for p in batch
             ]
         }
-        result = await llm(
-            usage,
-            "judge",
-            JUDGE_CACHE_KEY,
-            [
-                {"role": "system", "content": JUDGE_RUBRIC},
-                {
-                    "role": "user",
-                    "content": json.dumps(payload, ensure_ascii=False, indent=1),
-                },
-            ],
-            JudgeBatch,
-        )
+        try:
+            result = await llm(
+                usage,
+                "judge",
+                JUDGE_CACHE_KEY,
+                [
+                    {"role": "system", "content": JUDGE_RUBRIC},
+                    {
+                        "role": "user",
+                        "content": json.dumps(payload, ensure_ascii=False, indent=1),
+                    },
+                ],
+                JudgeBatch,
+            )
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"[:500]
+            return [(p, {"error": error}) for p in batch]
         by_id = {case.case_id: case for case in result.cases}
         graded = []
         for p in batch:
@@ -357,10 +375,14 @@ def run_metrics(
 ) -> dict[str, Any]:
     by_id = {v["case_id"]: v for v in verdicts}
     stored = garbage = duplicates = must_total = missed = empty_ok = empty_cases = 0
+    errors = 0
     categories: Counter[str] = Counter()
     for record in records:
         label = labels.get(record["case_id"], {"must": [], "may": []})
         verdict = by_id.get(record["case_id"], {})
+        if record.get("error") or verdict.get("error"):
+            errors += 1
+            continue
         items = verdict.get("items", [])
         stored += len(record["stored"])
         for item in items:
@@ -385,7 +407,7 @@ def run_metrics(
         "miss_rate": round(missed / must_total, 3) if must_total else 0.0,
         "clean_nothing_cases": f"{empty_ok}/{empty_cases}",
         "garbage_by_category": dict(categories.most_common()),
-        "errors": sum(1 for r in records if r.get("error")),
+        "errors": errors,
     }
 
 
@@ -497,6 +519,8 @@ def write_report(
                     )
             if record.get("error"):
                 lines.append(f"- {split} {record['case_id']} error: {record['error']}")
+            elif v.get("error"):
+                lines.append(f"- {split} {record['case_id']} ungraded: {v['error']}")
     (run_dir / "report.md").write_text("\n".join(lines) + "\n")
     (run_dir / "report.md").chmod(0o600)
 
@@ -537,6 +561,11 @@ async def cmd_run(args: argparse.Namespace) -> None:
         print(
             f"run {k}/{args.runs}: {len(records)} cases, {sum(len(r['stored']) for r in records)} stored"
         )
+        if QUOTA_REACHED.is_set():
+            print(
+                "stopped: the provider's usage limit was reached; later calls were skipped"
+            )
+            break
     (run_dir / "usage.json").write_text(json.dumps(usage.summary(), indent=1))
     write_report(
         run_dir,
