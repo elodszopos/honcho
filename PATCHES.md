@@ -23,11 +23,11 @@ One entry, one verdict: what the fork does, why upstream's version loses.
 |---|---|
 | Upstream | `plastic-labs/honcho` `main` |
 | Fork branch | `hermes` |
-| Fork point | `0936ee2e` — upstream's tip; the backlog is closed |
-| Last upstream merge | `0936ee2e`, 2026-10-02 |
-| Carried surface | 99 files, +6,625 / -2,133 against `0936ee2e`, measured on the merge tree; 42 further files are fork-only additions |
+| Fork point | `8e4df990` — upstream's tip; the backlog is closed |
+| Last upstream merge | `8e4df990`, 2026-10-04 |
+| Carried surface | 102 files, +6,780 / -2,144 against `8e4df990`, measured on the merge tree; 48 further files are fork-only additions |
 | Collides with upstream | the next pull's manifest comes from the gap report; nothing is outstanding |
-| Schema | unchanged by the fork; `migrations/` is byte-identical to `0936ee2e` |
+| Schema | unchanged by the fork; `migrations/` is byte-identical to `8e4df990` |
 
 ## Deliberately not carried
 
@@ -202,6 +202,9 @@ overrides say nothing about what a merge would revert. The assertion lives in
 
 - An SDK version bump runs `uv lock` in hermes-agent in the same pull; a major bump widens
   the agent's `honcho-ai` range first.
+- `uv.lock` differs from upstream's only by `pysbd`, and its `exclude-newer` line stays upstream's.
+  The local uv writes its own form of that line whenever it changes the lock, and upstream rewrites
+  it on every relock, so after any fork relock the line is set back to upstream's value.
 - `src/config.py` calls `load_dotenv(override=True)` at import, so `.env` beats the process
   environment regardless of the precedence its own settings sources declare.
   `PYTHON_DOTENV_DISABLED=1` turns it off.
