@@ -283,12 +283,10 @@ export function register(server: McpServer, ctx: ToolContext) {
             return [];
           }
           try {
-            return await peer.conclusions.query(
-              query,
-              conclusion_top_k,
-              undefined,
-              conclusion_filters,
-            );
+            return await peer.conclusions.query(query, {
+              topK: conclusion_top_k,
+              filters: conclusion_filters,
+            });
           } catch (e) {
             if (
               conclusion_filters &&

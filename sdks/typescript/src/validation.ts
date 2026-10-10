@@ -104,6 +104,7 @@ export const PeerCardConfigSchema = z
   .object({
     use: z.boolean().nullable().optional(),
     create: z.boolean().nullable().optional(),
+    customInstructions: z.string().nullable().optional(),
   })
   .strict()
 
@@ -116,6 +117,7 @@ export const SummaryConfigSchema = z
     enabled: z.boolean().nullable().optional(),
     messagesPerShortSummary: z.number().int().min(10).nullable().optional(),
     messagesPerLongSummary: z.number().int().min(20).nullable().optional(),
+    customInstructions: z.string().nullable().optional(),
   })
   .strict()
 
@@ -126,6 +128,17 @@ export const SummaryConfigSchema = z
 export const DreamConfigSchema = z
   .object({
     enabled: z.boolean().nullable().optional(),
+    customInstructions: z.string().nullable().optional(),
+  })
+  .strict()
+
+/**
+ * Schema for dialectic configuration.
+ * Used in workspace and session configuration.
+ */
+export const DialecticConfigSchema = z
+  .object({
+    customInstructions: z.string().nullable().optional(),
   })
   .strict()
 
@@ -135,10 +148,12 @@ export const DreamConfigSchema = z
  */
 export const SessionConfigSchema = z
   .object({
+    customInstructions: z.string().nullable().optional(),
     reasoning: ReasoningConfigSchema.nullable().optional(),
     peerCard: PeerCardConfigSchema.nullable().optional(),
     summary: SummaryConfigSchema.nullable().optional(),
     dream: DreamConfigSchema.nullable().optional(),
+    dialectic: DialecticConfigSchema.nullable().optional(),
   })
   .strict()
 
@@ -795,6 +810,7 @@ export type ReasoningConfigApi = {
 export type PeerCardConfigApi = {
   use?: boolean | null
   create?: boolean | null
+  custom_instructions?: string | null
 }
 
 /**
@@ -804,6 +820,7 @@ export type SummaryConfigApi = {
   enabled?: boolean | null
   messages_per_short_summary?: number | null
   messages_per_long_summary?: number | null
+  custom_instructions?: string | null
 }
 
 /**
@@ -811,16 +828,26 @@ export type SummaryConfigApi = {
  */
 export type DreamConfigApi = {
   enabled?: boolean | null
+  custom_instructions?: string | null
+}
+
+/**
+ * API format for dialectic config (snake_case).
+ */
+export type DialecticConfigApi = {
+  custom_instructions?: string | null
 }
 
 /**
  * API format for workspace configuration (snake_case).
  */
 export type WorkspaceConfigApi = {
+  custom_instructions?: string | null
   reasoning?: ReasoningConfigApi | null
   peer_card?: PeerCardConfigApi | null
   summary?: SummaryConfigApi | null
   dream?: DreamConfigApi | null
+  dialectic?: DialecticConfigApi | null
 }
 
 /**
@@ -877,13 +904,14 @@ function reasoningConfigFromApi(
  * Transform peer card config to API format.
  */
 function peerCardConfigToApi(
-  config: { use?: boolean | null; create?: boolean | null } | null | undefined
+  config: PeerCardConfig | null | undefined
 ): PeerCardConfigApi | null | undefined {
   if (config === null) return null
   if (config === undefined) return undefined
   return {
     use: config.use,
     create: config.create,
+    custom_instructions: config.customInstructions,
   }
 }
 
@@ -892,12 +920,13 @@ function peerCardConfigToApi(
  */
 function peerCardConfigFromApi(
   config: PeerCardConfigApi | null | undefined
-): { use?: boolean | null; create?: boolean | null } | null | undefined {
+): PeerCardConfig | null | undefined {
   if (config === null) return null
   if (config === undefined) return undefined
   return {
     use: config.use,
     create: config.create,
+    customInstructions: config.custom_instructions,
   }
 }
 
@@ -905,14 +934,7 @@ function peerCardConfigFromApi(
  * Transform summary config to API format.
  */
 function summaryConfigToApi(
-  config:
-    | {
-        enabled?: boolean | null
-        messagesPerShortSummary?: number | null
-        messagesPerLongSummary?: number | null
-      }
-    | null
-    | undefined
+  config: SummaryConfig | null | undefined
 ): SummaryConfigApi | null | undefined {
   if (config === null) return null
   if (config === undefined) return undefined
@@ -920,26 +942,23 @@ function summaryConfigToApi(
     enabled: config.enabled,
     messages_per_short_summary: config.messagesPerShortSummary,
     messages_per_long_summary: config.messagesPerLongSummary,
+    custom_instructions: config.customInstructions,
   }
 }
 
 /**
  * Transform summary config from API format.
  */
-function summaryConfigFromApi(config: SummaryConfigApi | null | undefined):
-  | {
-      enabled?: boolean | null
-      messagesPerShortSummary?: number | null
-      messagesPerLongSummary?: number | null
-    }
-  | null
-  | undefined {
+function summaryConfigFromApi(
+  config: SummaryConfigApi | null | undefined
+): SummaryConfig | null | undefined {
   if (config === null) return null
   if (config === undefined) return undefined
   return {
     enabled: config.enabled,
     messagesPerShortSummary: config.messages_per_short_summary,
     messagesPerLongSummary: config.messages_per_long_summary,
+    customInstructions: config.custom_instructions,
   }
 }
 
@@ -947,12 +966,13 @@ function summaryConfigFromApi(config: SummaryConfigApi | null | undefined):
  * Transform dream config to API format.
  */
 function dreamConfigToApi(
-  config: { enabled?: boolean | null } | null | undefined
+  config: DreamConfig | null | undefined
 ): DreamConfigApi | null | undefined {
   if (config === null) return null
   if (config === undefined) return undefined
   return {
     enabled: config.enabled,
+    custom_instructions: config.customInstructions,
   }
 }
 
@@ -961,11 +981,38 @@ function dreamConfigToApi(
  */
 function dreamConfigFromApi(
   config: DreamConfigApi | null | undefined
-): { enabled?: boolean | null } | null | undefined {
+): DreamConfig | null | undefined {
   if (config === null) return null
   if (config === undefined) return undefined
   return {
     enabled: config.enabled,
+    customInstructions: config.custom_instructions,
+  }
+}
+
+/**
+ * Transform dialectic config to API format.
+ */
+function dialecticConfigToApi(
+  config: DialecticConfig | null | undefined
+): DialecticConfigApi | null | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    custom_instructions: config.customInstructions,
+  }
+}
+
+/**
+ * Transform dialectic config from API format.
+ */
+function dialecticConfigFromApi(
+  config: DialecticConfigApi | null | undefined
+): DialecticConfig | null | undefined {
+  if (config === null) return null
+  if (config === undefined) return undefined
+  return {
+    customInstructions: config.custom_instructions,
   }
 }
 
@@ -977,10 +1024,12 @@ export function workspaceConfigToApi(
 ): WorkspaceConfigApi | undefined {
   if (!config) return undefined
   return {
+    custom_instructions: config.customInstructions,
     reasoning: reasoningConfigToApi(config.reasoning),
     peer_card: peerCardConfigToApi(config.peerCard),
     summary: summaryConfigToApi(config.summary),
     dream: dreamConfigToApi(config.dream),
+    dialectic: dialecticConfigToApi(config.dialectic),
   }
 }
 
@@ -993,10 +1042,12 @@ export function workspaceConfigFromApi(
   if (!config) return undefined
   const apiConfig = config as WorkspaceConfigApi
   return {
+    customInstructions: apiConfig.custom_instructions,
     reasoning: reasoningConfigFromApi(apiConfig.reasoning),
     peerCard: peerCardConfigFromApi(apiConfig.peer_card),
     summary: summaryConfigFromApi(apiConfig.summary),
     dream: dreamConfigFromApi(apiConfig.dream),
+    dialectic: dialecticConfigFromApi(apiConfig.dialectic),
   }
 }
 
@@ -1008,10 +1059,12 @@ export function sessionConfigToApi(
 ): SessionConfigApi | undefined {
   if (!config) return undefined
   return {
+    custom_instructions: config.customInstructions,
     reasoning: reasoningConfigToApi(config.reasoning),
     peer_card: peerCardConfigToApi(config.peerCard),
     summary: summaryConfigToApi(config.summary),
     dream: dreamConfigToApi(config.dream),
+    dialectic: dialecticConfigToApi(config.dialectic),
   }
 }
 
@@ -1024,10 +1077,12 @@ export function sessionConfigFromApi(
   if (!config) return undefined
   const apiConfig = config as SessionConfigApi
   return {
+    customInstructions: apiConfig.custom_instructions,
     reasoning: reasoningConfigFromApi(apiConfig.reasoning),
     peerCard: peerCardConfigFromApi(apiConfig.peer_card),
     summary: summaryConfigFromApi(apiConfig.summary),
     dream: dreamConfigFromApi(apiConfig.dream),
+    dialectic: dialecticConfigFromApi(apiConfig.dialectic),
   }
 }
 
@@ -1171,10 +1226,12 @@ export const WorkspaceMetadataSchema = z.record(z.string(), z.unknown())
  */
 export const WorkspaceConfigSchema = z
   .object({
+    customInstructions: z.string().nullable().optional(),
     reasoning: ReasoningConfigSchema.nullable().optional(),
     peerCard: PeerCardConfigSchema.nullable().optional(),
     summary: SummaryConfigSchema.nullable().optional(),
     dream: DreamConfigSchema.nullable().optional(),
+    dialectic: DialecticConfigSchema.nullable().optional(),
   })
   .strict()
 
@@ -1240,6 +1297,7 @@ export type ReasoningConfig = z.infer<typeof ReasoningConfigSchema>
 export type PeerCardConfig = z.infer<typeof PeerCardConfigSchema>
 export type SummaryConfig = z.infer<typeof SummaryConfigSchema>
 export type DreamConfig = z.infer<typeof DreamConfigSchema>
+export type DialecticConfig = z.infer<typeof DialecticConfigSchema>
 export type MessageConfiguration = z.infer<typeof MessageConfigurationSchema>
 export type Limit = z.infer<typeof LimitSchema>
 export type ConclusionQueryParams = z.infer<typeof ConclusionQueryParamsSchema>

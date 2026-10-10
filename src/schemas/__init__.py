@@ -72,6 +72,7 @@ from src.schemas.api import (
     WorkspaceUpdate,
 )
 from src.schemas.configuration import (
+    DialecticConfiguration,
     DreamConfiguration,
     DreamType,
     MessageConfiguration,
@@ -79,6 +80,7 @@ from src.schemas.configuration import (
     PeerConfig,
     ReasoningConfiguration,
     ResolvedConfiguration,
+    ResolvedDialecticConfiguration,
     ResolvedDreamConfiguration,
     ResolvedPeerCardConfiguration,
     ResolvedReasoningConfiguration,
@@ -104,6 +106,7 @@ from src.schemas.internal import (
 
 __all__ = [
     # configuration
+    "DialecticConfiguration",
     "DreamConfiguration",
     "DreamType",
     "MessageConfiguration",
@@ -111,6 +114,7 @@ __all__ = [
     "PeerConfig",
     "ReasoningConfiguration",
     "ResolvedConfiguration",
+    "ResolvedDialecticConfiguration",
     "ResolvedDreamConfiguration",
     "ResolvedPeerCardConfiguration",
     "ResolvedReasoningConfiguration",

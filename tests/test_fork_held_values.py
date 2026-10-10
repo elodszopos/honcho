@@ -373,7 +373,7 @@ def test_enrichment_locks_its_whole_batch_in_one_ordered_statement():
 # permanent, so a missing `deleted_at` filter no longer self-heals in five minutes.
 # Changing a count here means going to the site and deciding.
 _DOCUMENT_QUERY_SITES = {
-    "src/crud/document.py": 16,
+    "src/crud/document.py": 17,
     "src/crud/representation.py": 2,
     "src/deriver/scope_backfill.py": 5,
     "src/dreamer/dream_scheduler.py": 1,

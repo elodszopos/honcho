@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.dialectic import chat
 from src.dialectic.automatic import AutomaticDialecticAgent, cut_at_sentence
 from src.llm import HonchoLLMCallResponse
-from src.utils import summarizer
+from src.utils import curated_memory, summarizer
 from src.utils.evidence import EvidenceAccumulator
 
 KNOWN = "User has a Google billing account"
@@ -313,8 +314,6 @@ class TestAutomaticAgent:
     async def test_curated_memory_closes_the_system_prompt(
         self, automatic_data: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ):
-        from src.utils import curated_memory
-
         workspace = automatic_data[0]
         path = tmp_path / "USER.md"
         path.write_text("- the user is vegetarian\n", encoding="utf-8")
@@ -330,6 +329,73 @@ class TestAutomaticAgent:
             '<file name="USER.md">\n- the user is vegetarian\n</file>'
         )
         assert "a fact a `<file>` block states" in system
+
+    async def test_dialectic_instructions_precede_curated_memory(
+        self, automatic_data: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ):
+        workspace = automatic_data[0]
+        path = tmp_path / "USER.md"
+        path.write_text("- the user is vegetarian\n", encoding="utf-8")
+        monkeypatch.setattr(
+            settings.CURATED_MEMORY, "PATHS", {workspace.name: [str(path)]}
+        )
+        curated_memory._cache.clear()
+
+        agent = make_agent(
+            automatic_data,
+            instructions=schemas.ResolvedDialecticConfiguration(
+                custom_instructions="Write in German."
+            ),
+        )
+
+        system = agent.messages[0]["content"]
+        instructions_at = system.index("CUSTOM INSTRUCTIONS:\nWrite in German.")
+        assert instructions_at < system.index('<file name="USER.md">')
+        assert (
+            "CUSTOM INSTRUCTIONS:"
+            not in make_agent(automatic_data).messages[0]["content"]
+        )
+
+    async def test_chat_hands_the_dialectic_instructions_to_automatic_mode(
+        self, automatic_data: Any, db_session: AsyncSession
+    ):
+        workspace, peer, *_ = automatic_data
+        await crud.update_workspace(
+            db_session,
+            workspace.name,
+            schemas.WorkspaceUpdate(
+                configuration=schemas.WorkspaceConfiguration(
+                    dialectic=schemas.DialecticConfiguration(
+                        custom_instructions="Write in German."
+                    )
+                )
+            ),
+        )
+        built: list[AutomaticDialecticAgent] = []
+
+        def _build(**kwargs: Any) -> AutomaticDialecticAgent:
+            agent = AutomaticDialecticAgent(**kwargs)
+            built.append(agent)
+            return agent
+
+        with (
+            patch.object(chat, "AutomaticDialecticAgent", side_effect=_build),
+            patch(
+                "src.dialectic.core.honcho_llm_call",
+                new=AsyncMock(return_value=_llm_response("NONE")),
+            ),
+        ):
+            await chat.agentic_chat(
+                workspace_name=workspace.name,
+                session_name=None,
+                query="## Current user message\nlook at the reddit job",
+                observer=peer.name,
+                observed=peer.name,
+                automatic=schemas.AutomaticChatOptions(search_text="reddit digest"),
+            )
+
+        system = built[0].messages[0]["content"]
+        assert "CUSTOM INSTRUCTIONS:\nWrite in German." in system
 
     async def test_none_answer_becomes_empty(self, automatic_data: Any):
         answer, _ = await run_answer(make_agent(automatic_data), content="NONE.")

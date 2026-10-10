@@ -157,7 +157,7 @@ export function register(server: McpServer, ctx: ToolContext) {
         const scope = target_peer_id
           ? peer.conclusionsOf(target_peer_id)
           : peer.conclusions;
-        const conclusions = await scope.query(query, top_k, undefined, filters);
+        const conclusions = await scope.query(query, { topK: top_k, filters });
         return textResult(formatConclusions(conclusions));
       } catch (e) {
         return errorResult(

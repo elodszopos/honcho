@@ -38,6 +38,7 @@ def _configuration() -> Mock:
     configuration = Mock()
     configuration.reasoning.enabled = True
     configuration.reasoning.custom_instructions = None
+    configuration.reasoning.custom_instructions_source = None
     return configuration
 
 

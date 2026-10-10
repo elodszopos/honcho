@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 This package versions independently of the Honcho API, `@honcho-ai/sdk`, and host plugins.
 
-## [Unreleased]
+## [3.1.0] - 2026-10-07
+
+### Added
+
+- Optional Sentry error reporting for the Worker, HTTP, and stdio hosts, enabled by
+  setting `SENTRY_DSN`. Unset, it is a no-op.
 
 ### Fixed
 

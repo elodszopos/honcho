@@ -1,9 +1,6 @@
 """The reconciler drains legacy JSONB source linkage into document_sources."""
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -11,15 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.deriver.consumer import process_reconciler
-from src.reconciler import scheduler as scheduler_module
 from src.reconciler.backfill_document_sources import (
+    count_pending_document_sources,
     drain_document_sources_batch,
     has_pending_document_sources,
 )
-from src.reconciler.scheduler import RECONCILER_TASKS, ReconcilerScheduler
-from src.schemas import ReconcilerType
-from src.utils.queue_payload import ReconcilerPayload
 
 
 async def _collection(db: AsyncSession) -> tuple[str, str]:
@@ -87,6 +80,7 @@ async def test_drain_covers_every_legacy_location(db_session: AsyncSession) -> N
     ids = [column.id, meta.id, premise.id, garbage.id]
 
     assert await has_pending_document_sources(db_session)
+    assert await count_pending_document_sources(db_session) == 4
 
     drained = await drain_document_sources_batch(db_session)
     await db_session.commit()
@@ -105,6 +99,7 @@ async def test_drain_covers_every_legacy_location(db_session: AsyncSession) -> N
     assert (await _reload(db_session, ids[1])).internal_metadata == {"keep": True}
 
     assert not await has_pending_document_sources(db_session)
+    assert await count_pending_document_sources(db_session) == 0
 
 
 @pytest.mark.asyncio
@@ -169,67 +164,3 @@ async def test_source_ids_property_falls_back_until_drained(
 
     assert doc.legacy_source_ids is None
     assert doc.source_ids == [a, b]
-
-
-@pytest.fixture(autouse=True)
-def _reset_scheduler_singleton() -> Any:
-    ReconcilerScheduler.reset_singleton()
-    yield
-    ReconcilerScheduler.reset_singleton()
-
-
-@pytest.mark.parametrize("has_work", [False, True])
-@pytest.mark.asyncio
-async def test_backfill_enqueue_gated_on_pending(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-    has_work: bool,
-) -> None:
-    @asynccontextmanager
-    async def _db(_: str | None = None) -> AsyncGenerator[AsyncSession]:
-        yield db_session
-
-    monkeypatch.setattr(scheduler_module, "tracked_db", _db)
-    monkeypatch.setattr(
-        scheduler_module,
-        "has_pending_document_sources",
-        AsyncMock(return_value=has_work),
-    )
-
-    enqueued = await ReconcilerScheduler()._try_enqueue_task(  # pyright: ignore[reportPrivateUsage]
-        RECONCILER_TASKS["backfill_document_sources"]
-    )
-    rows = (
-        (
-            await db_session.execute(
-                select(models.QueueItem).where(
-                    models.QueueItem.work_unit_key
-                    == "reconciler:backfill_document_sources"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    assert enqueued is has_work
-    assert len(rows) == (1 if has_work else 0)
-
-
-@pytest.mark.asyncio
-async def test_process_reconciler_dispatches_document_sources_backfill(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    called = False
-
-    async def _fake() -> None:
-        nonlocal called
-        called = True
-
-    monkeypatch.setattr(
-        "src.deriver.consumer.run_document_sources_backfill_cycle", _fake
-    )
-    await process_reconciler(
-        ReconcilerPayload(reconciler_type=ReconcilerType.BACKFILL_DOCUMENT_SOURCES)
-    )
-    assert called

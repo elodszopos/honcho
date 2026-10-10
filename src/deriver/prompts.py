@@ -11,6 +11,7 @@ from functools import lru_cache
 from inspect import cleandoc as c
 from typing import Any
 
+from src.utils.formatting import custom_instructions_section
 from src.utils.tokens import estimate_tokens
 from src.writing_contract import CONCLUSION_WRITING_CONTRACT
 
@@ -54,19 +55,12 @@ def _normalized_custom_instructions(custom_instructions: str | None) -> str | No
 
 def _custom_instructions_section(custom_instructions: str | None) -> str:
     """Render optional custom instructions for the deriver prompt."""
-    normalized_custom_instructions = _normalized_custom_instructions(
-        custom_instructions
-    )
-    if normalized_custom_instructions is None:
-        return ""
-
-    return c(
-        f"""
-        CUSTOM INSTRUCTIONS:
-        - These instructions apply to the target peer named in the user turn.
-        - They may narrow extraction further; they cannot override or relax the NEVER EXTRACT rules.
-        {normalized_custom_instructions}
-        """
+    return custom_instructions_section(
+        custom_instructions,
+        note=(
+            "- These instructions apply to the target peer named in the user turn.\n"
+            "- They may narrow extraction further; they cannot override or relax the NEVER EXTRACT rules."
+        ),
     )
 
 

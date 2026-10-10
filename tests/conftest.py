@@ -90,6 +90,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/crud/test_session_scope_clauses.py",
     # Pure prompt-rendering tests — string assembly only, no DB needed.
     "tests/deriver/test_prompts.py",
+    "tests/utils/test_custom_instructions_prompts.py",
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
@@ -292,14 +293,15 @@ async def setup_test_database(db_url: URL):
     engine = create_async_engine(db_url, echo=False)
     async with engine.connect() as conn:
         try:
-            logger.info("Attempting to create pgvector extension...")
+            logger.info("Attempting to create pgvector and pg_trgm extensions...")
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             await conn.commit()
-            logger.info("pgvector extension created successfully.")
+            logger.info("pgvector and pg_trgm extensions created successfully.")
         except ProgrammingError as e:
             logger.error(f"ProgrammingError: {e}")
             raise RuntimeError(
-                "Failed to create pgvector extension. Make sure it's installed on the PostgreSQL server."
+                "Failed to create pgvector/pg_trgm extensions. Make sure they're installed on the PostgreSQL server."
             ) from e
         except OperationalError as e:
             logger.error(f"OperationalError: {e}")
@@ -938,8 +940,6 @@ def mock_tracked_db(request: pytest.FixtureRequest):
 
     with patch_tracked_db(request.getfixturevalue("db_engine")):
         yield
-
-
 
 
 @pytest.fixture(autouse=True)

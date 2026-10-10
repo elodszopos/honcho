@@ -277,6 +277,7 @@ async def process_representation_tasks_batch(
                 track_name="Minimal Deriver",
                 trace_id=trace_id,
                 span_id=trace_id,
+                custom_instructions=custom_instructions,
             ),
         )
     except Exception:
@@ -447,6 +448,7 @@ async def process_representation_tasks_batch(
                     track_name="Conclusion Admission",
                     trace_id=admission_trace_id,
                     span_id=admission_trace_id,
+                    custom_instructions=custom_instructions,
                 ),
             )
         except Exception:
@@ -677,6 +679,8 @@ async def process_representation_tasks_batch(
             extra_context_message_count=extra_context_message_count,
             extra_context_tokens=extra_context_tokens,
             prompt_scaffold_tokens=prompt_tokens,
+            custom_instructions_tokens=estimate_tokens(custom_instructions),
+            custom_instructions_source=message_level_configuration.reasoning.custom_instructions_source,
             batch_max_tokens=batch_max_tokens,
             max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
             was_flush_enabled=was_flush_enabled,

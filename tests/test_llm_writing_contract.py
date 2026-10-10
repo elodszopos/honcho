@@ -124,7 +124,6 @@ def test_conclusion_models_reject_text_over_the_hard_limit():
 
 def test_agent_tool_schemas_publish_the_hard_limit():
     for tool_name in (
-        "create_observations",
         "create_observations_deductive",
         "create_observations_inductive",
     ):

@@ -44,7 +44,7 @@ TRACKED_DB_TARGETS: tuple[str, ...] = (
     "src.deriver.scope_backfill.tracked_db",
     "src.backlog.tracked_db",
     "src.dialectic.workspace.tracked_db",
-    "src.reconciler.backfill_document_sources.tracked_db",
+    "src.reconciler.backfill.tracked_db",
     "src.reconciler.queue_cleanup.tracked_db",
     "src.reconciler.scheduler.tracked_db",
 )

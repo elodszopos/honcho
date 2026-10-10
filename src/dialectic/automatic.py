@@ -56,6 +56,7 @@ class AutomaticDialecticAgent(DialecticAgent):
         session_id: str | None = None,
         session_allowlist: list[str] | None = None,
         evidence: EvidenceAccumulator | None = None,
+        instructions: schemas.ResolvedDialecticConfiguration | None = None,
     ) -> None:
         super().__init__(
             workspace_name=workspace_name,
@@ -67,15 +68,18 @@ class AutomaticDialecticAgent(DialecticAgent):
             session_id=session_id,
             session_allowlist=session_allowlist,
             evidence=evidence,
+            instructions=instructions,
         )
         self.options: schemas.AutomaticChatOptions = options
         self._prefetch_stats: dict[str, float] = {}
+        self._context_empty: bool = False
         self.messages[0] = {
             "role": "system",
             "content": prompts.automatic_system_prompt(
                 observed,
                 options.max_answer_chars,
                 curated_memory_block(workspace_name),
+                self.instructions.custom_instructions,
             ),
         }
 
@@ -196,7 +200,7 @@ class AutomaticDialecticAgent(DialecticAgent):
 
     async def _prepare_query(self, query: str, telemetry: LLMTelemetryContext) -> Any:
         prepared = await super()._prepare_query(query, telemetry)
-        if getattr(self, "_context_empty", False):
+        if self._context_empty:
             run = prepared[-1]
             if run is not None:
                 run.end()

@@ -4,6 +4,7 @@ System prompts for the Dialectic Agent.
 
 from collections.abc import Iterable
 
+from src.utils.formatting import custom_instructions_section
 from src.writing_contract import LLM_CONSUMED_WRITING_CONTRACT
 
 # Curated tool docs, keyed by the `name` each loadout actually exposes.
@@ -111,12 +112,18 @@ def _render_tool_groups(
     return "\n\n".join(parts)
 
 
+def _custom_instructions_suffix(custom_instructions: str | None) -> str:
+    section = custom_instructions_section(custom_instructions)
+    return f"\n{section}\n" if section else ""
+
+
 def agent_system_prompt(
     observer: str,
     observed: str,
     observer_peer_card: list[str] | None,
     observed_peer_card: list[str] | None,
     available_tools: Iterable[str] | None = None,
+    custom_instructions: str | None = None,
 ) -> str:
     """System prompt for pair-scoped dialectic recall.
 
@@ -127,6 +134,7 @@ def agent_system_prompt(
         observed_peer_card: Biographical information about the observed peer
         available_tools: Tool names offered on this request. Defaults to the
             full pair loadout.
+        custom_instructions: Resolved dialectic custom instructions, if any
     """
     # Determine if we have any peer card data
     peer_cards_enabled = (
@@ -324,11 +332,14 @@ If after thorough searching you find NOTHING relevant:
 - State contradictions explicitly.
 - Omit generic disclaimers and offers of further help.
 - Preserve material uncertainty and evidence limits.
-"""
+{_custom_instructions_suffix(custom_instructions)}"""
 
 
 def automatic_system_prompt(
-    observed: str, max_answer_chars: int, curated_memory: str = ""
+    observed: str,
+    max_answer_chars: int,
+    curated_memory: str = "",
+    custom_instructions: str | None = None,
 ) -> str:
     """System prompt for the automatic lane: one context block, no tools; the user's curated
     memory closes the block so the cached prefix survives its edits longest."""
@@ -361,12 +372,13 @@ CONSUMER:
 - Give no advice; use no second person; ask no question.
 - Try not to go beyond {max_answer_chars} characters.
 - Answer with the single word NONE when nothing in the context bears on the current message.
-"""
+{_custom_instructions_suffix(custom_instructions)}"""
     return f"{prompt}\n{curated_memory}\n" if curated_memory else prompt
 
 
 def workspace_agent_system_prompt(
     available_tools: Iterable[str] | None = None,
+    custom_instructions: str | None = None,
 ) -> str:
     """System prompt for workspace-wide dialectic recall."""
     tools = _available_tool_names(available_tools, WORKSPACE_PROMPT_TOOLS)
@@ -427,4 +439,4 @@ State only what you found. If you have related context but not the asked-for det
 ## CONCLUSION LEVELS
 
 `explicit` conclusions are derived from a single session. Deductive and inductive conclusions consolidate across sessions. Prefer those for cross-session or cross-peer answers, and use `get_reasoning_chain` to check their premises.
-"""
+{_custom_instructions_suffix(custom_instructions)}"""
